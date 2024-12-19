@@ -1,41 +1,48 @@
-<!-- เปิดส่วนของ PHP -->
-<?php
-
-?>
-<!-- ปิดส่วนของ PHP -->
-
 <!DOCTYPE html>
 <html lang="th">
 
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AIตรวจจับช้างป่า</title>
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
-    <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder@2.4.0/dist/Control.Geocoder.css"/>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
-    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap"
-        rel="stylesheet" />
-	<script src="https://unpkg.com/leaflet-control-geocoder@2.4.0/dist/Control.Geocoder.js"></script>
-    <style>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>AI ตรวจจับช้างป่า</title>
+        <!-- Leaflet CSS -->
+        <link rel="stylesheet"
+            href="https://unpkg.com/leaflet/dist/leaflet.css" />
+        <!-- Leaflet Geocoder CSS -->
+        <link rel="stylesheet"
+            href="https://unpkg.com/leaflet-control-geocoder@2.4.0/dist/Control.Geocoder.css" />
+        <!-- Leaflet Routing Machine CSS -->
+        <link rel="stylesheet"
+            href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
+        <!-- Google Fonts -->
+        <link
+            href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap"
+            rel="stylesheet" />
+
+        <!-- Leaflet JS -->
+        <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+        <!-- Leaflet Geocoder JS -->
+        <script
+            src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+        <!-- Leaflet Routing Machine JS -->
+        <script
+            src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
+        <style>
         :root {
-            --primary-color: #3B82F6;
-            --primary-dark: #2563EB;
-            --success-color: #10B981;
-            --bg-light: #F3F4F6;
-            --bg-dark: #1F2937;
+            --primary-color: #3b82f6;
+            --primary-dark: #2563eb;
+            --success-color: #10b981;
+            --bg-light: #f3f4f6;
+            --bg-dark: #1f2937;
             --text-light: #374151;
-            --text-dark: #F9FAFB;
+            --text-dark: #f9fafb;
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Prompt', sans-serif;
+            font-family: "Prompt", sans-serif;
         }
 
         html {
@@ -204,7 +211,7 @@
         }
 
         .loading::after {
-            content: '';
+            content: "";
             display: block;
             width: 30px;
             height: 30px;
@@ -258,7 +265,6 @@
             overflow: hidden !important;
         }
 
-
         .leaflet-control-geocoder-form {
             padding: 0 !important;
             margin: 0 !important;
@@ -296,6 +302,7 @@
         .leaflet-routing-container.leaflet-bar.leaflet-control {
             display: none !important;
         }
+		
 
         /* Mobile-specific adjustments */
         @media screen and (max-width: 480px) {
@@ -358,11 +365,53 @@
         }
 
         .notification.warning {
-            background-color: #F59E0B;
+            background-color: #f59e0b;
         }
 
         .notification.error {
-            background-color: #EF4444;
+            background-color: #ef4444;
+        }
+
+        #clearRouteBtn {
+            background-color: #ef4444;
+            /* สีแดง */
+            color: #ffffff;
+            /* ตัวอักษรสีขาว */
+            border: none;
+            /* ไม่มีเส้นขอบ */
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            /* เงาเล็กน้อย */
+            transition: all 0.3s ease;
+        }
+
+        #clearRouteBtn:hover {
+            background-color: #dc2626;
+            /* สีแดงเข้มเมื่อโฮเวอร์ */
+            transform: translateY(-2px);
+            /* ยกปุ่มขึ้นเล็กน้อย */
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+            /* เงาเพิ่มขึ้น */
+        }
+
+        #stopTrackingBtn {
+            background-color: #f59e0b;
+            /* สีส้ม */
+            color: #ffffff;
+            /* ตัวอักษรสีขาว */
+            border: none;
+            /* ไม่มีเส้นขอบ */
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            /* เงาเล็กน้อย */
+            transition: all 0.3s ease;
+        }
+
+        #stopTrackingBtn:hover {
+            background-color: #d97706;
+            /* สีส้มเข้มเมื่อโฮเวอร์ */
+            transform: translateY(-2px);
+            /* ยกปุ่มขึ้นเล็กน้อย */
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+            /* เงาเพิ่มขึ้น */
         }
 
         @keyframes slideDown {
@@ -400,81 +449,92 @@
                 min-width: auto;
                 top: 10px;
             }
+
         }
     </style>
-</head>
+    </head>
 
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>AI ตรวจจับช้างป่า</h1>
-            <button onclick="toggleTheme()" class="theme-toggle" id="themeToggle">
-                <span id="themeIcon">🌙</span>
-            </button>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>AI ตรวจจับช้างป่า</h1>
+                <button onclick="toggleTheme()" class="theme-toggle"
+                    id="themeToggle">
+                    <span id="themeIcon">🌙</span>
+                </button>
+            </div>
+
+            <div class="controls">
+                <button class="modern-button" onclick="getLocation()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16"
+                        height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path
+                            d="M8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10zm0-7a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" />
+                    </svg>
+                    ค้นหาตำแหน่งของคุณ
+                </button>
+                <button class="modern-button"
+                    onclick="window.location.href='https://aprlabtop.com/Honey_test/admin_dashboard.php'">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16"
+                        height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path
+                            d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z" />
+                        <path
+                            d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z" />
+                    </svg>
+                    แผงควบคุมผู้ดูแล
+                </button>
+                <button class="modern-button" onclick="clearRoute()"
+                    id="clearRouteBtn" style="display: none">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16"
+                        height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path
+                            d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+                    </svg>
+                    ล้างการนำทาง
+                </button>
+            </div>
+
+            <div id="mapid"></div>
+            <div class="loading">กำลังโหลด...</div>
+
+            <div class="stats">
+                <div class="stat-card">
+                    <h3>ระยะทางรวมเฉลี่ย</h3>
+                    <p id="totalDistance">- กม.</p>
+                </div>
+                <div class="stat-card">
+                    <h3>เวลาเดินทางเฉลี่ย</h3>
+                    <p id="travelTime">- นาที</p>
+                </div>
+                <div class="stat-card">
+                    <h3>จุดที่พบช้างป่า</h3>
+                    <p id="nearbyCount">- จุด</p>
+                </div>
+                <div class="stat-card" id="elephantStatusCard">
+                    <h3>สถานะการตรวจจับช้าง</h3>
+                    <p id="elephantStatus">-</p>
+                </div>
+            </div>
         </div>
 
-        <div class="controls">
-            <button class="modern-button" onclick="getLocation()">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                    <path d="M8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10zm0-7a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" />
-                </svg>
-                ค้นหาตำแหน่งของคุณ
-            </button>
-            <button class="modern-button" onclick="showNearbyPlaces()">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                    <path
-                        d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM2.04 4.326c.325 1.329 2.532 2.54 3.717 3.19.48.263.793.434.743.484-.08.08-.162.158-.242.234-.416.396-.787.749-.758 1.266.035.634.618.824 1.214 1.017.577.188 1.168.38 1.286.983.082.417-.075.988-.22 1.52-.215.782-.406 1.48.22 1.48 1.5-.5 3.798-3.186 4-5 .138-1.243-2-2-3.5-2.5-.478-.16-.755.081-.99.284-.172.15-.322.279-.51.216-.445-.148-2.5-2-1.5-2.5.78-.39.952-.171 1.227.182.078.099.163.208.273.318.609.304.662-.132.723-.633.039-.322.081-.671.277-.867.434-.434 1.265-.791 2.028-1.12.712-.306 1.365-.587 1.579-.88A7 7 0 1 1 2.04 4.327z" />
-                </svg>
-                สถานที่ใกล้เคียง
-            </button>
-            <button class="modern-button" onclick="clearRoute()" id="clearRouteBtn" style="display: none;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                    <path
-                        d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
-                </svg>
-                ล้างการนำทาง
-            </button>
-            <button class="modern-button" onclick="window.location.href='https://aprlabtop.com/Honey_test/admin_dashboard.php'">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                    <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
-                    <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/>
-                </svg>
-                แผงควบคุมผู้ดูแล
-            </button>
-        </div>
-
-        <div id="mapid"></div>
-        <div class="loading">กำลังโหลด...</div>
-
-        <div class="stats">
-            <div class="stat-card">
-                <h3>ระยะทางรวมเฉลี่ย</h3>
-                <p id="totalDistance">- กม.</p>
-            </div>
-            <div class="stat-card">
-                <h3>เวลาเดินทางเฉลี่ย</h3>
-                <p id="travelTime">- นาที</p>
-            </div>
-            <div class="stat-card">
-                <h3>จุดสนใจใกล้เคียง</h3>
-                <p id="nearbyCount">- แห่ง</p>
-            </div>
-        </div>
-    </div>
-
-    <script>
+        <script>
+			
+        // ตั้งค่าตัวแปรพื้นฐาน
         let isDarkMode = false;
-        const darkTileLayer =
-            "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-        const lightTileLayer =
-            "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+        const darkTileLayer = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+        const lightTileLayer = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
         let currentTileLayer;
         let mymap;
         let currentLocationMarker = null;
         let lastMarker = null;
         let currentRoute = null;
         let watchId = null;
+        let popupUpdateInterval = null;
+        let isFirstPosition = true;
+        let lastDetectionTime = 0;
 
+        // ไอคอนสำหรับตำแหน่งปัจจุบัน
         const currentLocationIcon = L.icon({
             iconUrl: "https://cdn-icons-png.flaticon.com/512/1828/1828884.png",
             iconSize: [36, 36],
@@ -482,6 +542,15 @@
             popupAnchor: [0, -18],
         });
 
+        // ไอคอนสำหรับช้าง
+        const elephantIcon = L.icon({
+            iconUrl: "https://cdn-icons-png.flaticon.com/128/1864/1864469.png",
+            iconSize: [32, 32],
+            iconAnchor: [16, 32],
+            popupAnchor: [0, -32],
+        });
+
+        // ฟังก์ชันสำหรับเริ่มต้นแผนที่
         function initializeMap() {
             mymap = L.map("mapid").setView([14.439606, 101.372359], 13);
             currentTileLayer = L.tileLayer(lightTileLayer, {
@@ -496,20 +565,50 @@
                 popupAnchor: [0, -36],
             });
 
-            var camera2Marker = L.marker([14.22512, 101.40544], {
+            const camera2Position = [14.22512, 101.40544];
+
+            const cameraRadiusCircle = L.circle(camera2Position, {
+                radius: 1000,
+                color: "#FF5C5C",
+                fillColor: "#FF5C5C",
+                fillOpacity: 0.2,
+                weight: 2,
+                dashArray: "5, 10",
+            }).addTo(mymap);
+
+            const innerCameraCircle = L.circle(camera2Position, {
+                radius: 500,
+                color: "#FF0000",
+                fillColor: "#FF0000",
+                fillOpacity: 0.1,
+                weight: 2,
+            }).addTo(mymap);
+
+            var camera2Marker = L.marker(camera2Position, {
                 icon: cameraIcon,
             }).addTo(mymap);
+
             camera2Marker.bindPopup(`
                 <div class="popup-content">
-                <h3>กล้อง CCTV #2</h3>
-                <p>ละติจูด: 14.22512</p>
-                <p>ลองจิจูด: 101.40544</p>
-                <p>สถานะ: ออนไลน์</p>
-                <button class="modern-button" onclick="viewCameraFeed(2)">
-                ดูภาพจากกล้อง
-                </button>
+                    <h3>กล้อง CCTV #2</h3>
+                    <p>ละติจูด: ${camera2Position[0]}</p>
+                    <p>ลองจิจูด: ${camera2Position[1]}</p>
+                    <p>รัศมีการตรวจจับ: 1 กิโลเมตร</p>
+                    <p>พื้นที่เฝ้าระวัง: 500 เมตร</p>
+                    <p>สถานะ: ออนไลน์</p>
+                    <button class="modern-button" onclick="viewCameraFeed(2)">ดูภาพจากกล้อง</button>
                 </div>
             `);
+
+            cameraRadiusCircle.bindTooltip("รัศมีการตรวจจับ 1 กม.", {
+                permanent: false,
+                direction: "center",
+            });
+
+            innerCameraCircle.bindTooltip("พื้นที่เฝ้าระวัง 500 ม.", {
+                permanent: false,
+                direction: "center",
+            });
 
             const geocoder = L.Control.Geocoder.nominatim({
                 geocodingQueryParams: {
@@ -537,12 +636,12 @@
         function getLocation() {
             showLoading();
             if (navigator.geolocation) {
-                // Clear any existing watch
                 if (watchId) {
                     navigator.geolocation.clearWatch(watchId);
                 }
 
-                // Start watching position
+                isFirstPosition = true;
+
                 watchId = navigator.geolocation.watchPosition(
                     showPosition,
                     showError,
@@ -552,8 +651,6 @@
                         maximumAge: 0,
                     }
                 );
-
-                // Add stop tracking button
                 addStopTrackingButton();
             } else {
                 hideLoading();
@@ -561,56 +658,14 @@
             }
         }
 
-        function stopTracking() {
-            if (watchId) {
-                navigator.geolocation.clearWatch(watchId);
-                watchId = null;
-                if (popupUpdateInterval) {
-                    clearInterval(popupUpdateInterval);
-                    popupUpdateInterval = null;
-                }
-                showNotification("หยุดการติดตามตำแหน่งแล้ว", "info");
-                removeStopTrackingButton();
-            }
-        }
-        function addStopTrackingButton() {
-            removeStopTrackingButton();
-
-            const stopButton = document.createElement("button");
-            stopButton.className = "modern-button";
-            stopButton.id = "stopTrackingBtn";
-            stopButton.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                    <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-                    <path d="M5 6.25a1.25 1.25 0 1 1 2.5 0v3.5a1.25 1.25 0 1 1-2.5 0v-3.5zm3.5 0a1.25 1.25 0 1 1 2.5 0v3.5a1.25 1.25 0 1 1-2.5 0v-3.5z"/>
-                </svg>
-                หยุดการติดตาม
-            `;
-            stopButton.onclick = stopTracking;
-
-            document.querySelector(".controls").appendChild(stopButton);
-        }
-
-        function removeStopTrackingButton() {
-            const existingButton = document.getElementById("stopTrackingBtn");
-            if (existingButton) {
-                existingButton.remove();
-            }
-        }
-
-        let timeUpdateInterval = null;
-        let popupUpdateInterval = null;
-
         function showPosition(position) {
             const lat = position.coords.latitude;
             const lng = position.coords.longitude;
-            const accuracy = position.coords.accuracy;
 
             if (currentLocationMarker) {
                 mymap.removeLayer(currentLocationMarker);
             }
 
-            // Clear existing intervals if any
             if (popupUpdateInterval) {
                 clearInterval(popupUpdateInterval);
             }
@@ -622,38 +677,34 @@
             function updatePopupTime() {
                 if (currentLocationMarker && currentLocationMarker.getPopup()) {
                     currentLocationMarker.setPopupContent(`
+                        <div class="popup-content">
+                            <h3>ตำแหน่งของคุณ</h3>
+                            <p>ละติจูด: ${lat.toFixed(5)}</p>
+                            <p>ลองจิจูด: ${lng.toFixed(5)}</p>
+                            <p>อัพเดทล่าสุด: ${new Date().toLocaleTimeString("th-TH")}</p>
+                        </div>
+                    `);
+                }
+            }
+
+            currentLocationMarker.bindPopup(`
                 <div class="popup-content">
                     <h3>ตำแหน่งของคุณ</h3>
                     <p>ละติจูด: ${lat.toFixed(5)}</p>
                     <p>ลองจิจูด: ${lng.toFixed(5)}</p>
-                    <p>อัพเดทล่าสุด: ${new Date().toLocaleTimeString()}</p>
+                    <p>อัพเดทล่าสุด: ${new Date().toLocaleTimeString("th-TH")}</p>
                 </div>
             `);
-                }
+
+            if (isFirstPosition) {
+                currentLocationMarker.openPopup();
+                isFirstPosition = false;
+                mymap.setView([lat, lng], 15);
             }
 
-            // Set initial popup content
-            // <p>ความแม่นยำ: ±${accuracy.toFixed(1)} เมตร</p>
-            currentLocationMarker
-                .bindPopup(
-                    `
-        <div class="popup-content">
-            <h3>ตำแหน่งของคุณ</h3>
-            <p>ละติจูด: ${lat.toFixed(5)}</p>
-            <p>ลองจิจูด: ${lng.toFixed(5)}</p>
-            <p>อัพเดทล่าสุด: ${new Date().toLocaleTimeString()}</p>
-        </div>
-    `
-                )
-                .openPopup();
-
-            // Start updating popup time every second
             popupUpdateInterval = setInterval(updatePopupTime, 1000);
-
-            mymap.setView([lat, lng], 15);
             hideLoading();
             updateStats([lat, lng]);
-            findNearbyPlaces([lat, lng]);
         }
 
         function showError(error) {
@@ -676,79 +727,6 @@
             showNotification(message, "error");
         }
 
-        function handleLocationSelect(latlng) {
-            if (lastMarker) {
-                mymap.removeLayer(lastMarker);
-            }
-
-            lastMarker = L.marker([latlng.lat, latlng.lng]).addTo(mymap);
-
-            // สร้าง popup content ทันที
-            let popupContent = `
-        <div class="popup-content">
-            <h3>กำลังโหลด</h3>
-            <p>ละติจูด: ${latlng.lat.toFixed(5)}</p>
-            <p>ลองจิจูด: ${latlng.lng.toFixed(5)}</p>
-            <button onclick='createRoute([${latlng.lat}, ${latlng.lng}])' class='modern-button'>
-                นำทางไปที่นี่
-            </button>
-        </div>
-    `;
-
-            // ผูก popup กับ marker และแสดงทันที
-            lastMarker.bindPopup(popupContent).openPopup();
-
-            // ทำ reverse geocoding แยก
-            const geocoder = L.Control.Geocoder.nominatim();
-            geocoder.reverse(
-                latlng,
-                mymap.options.crs.scale(mymap.getZoom()),
-                function (results) {
-                    if (results && results.length > 0) {
-                        const placeName = results[0].name || "ตำแหน่งที่เลือก";
-                        // อัพเดท popup content เมื่อได้ชื่อสถานที่
-                        popupContent = `
-                    <div class="popup-content">
-                        <h3>${placeName}</h3>
-                        <p>ละติจูด: ${latlng.lat.toFixed(5)}</p>
-                        <p>ลองจิจูด: ${latlng.lng.toFixed(5)}</p>
-                        <button onclick='createRoute([${latlng.lat}, ${latlng.lng}])' class='modern-button'>
-                            นำทางไปที่นี่
-                        </button>
-                    </div>
-                `;
-                        lastMarker.setPopupContent(popupContent);
-                    }
-                }
-            );
-
-            updateStats([latlng.lat, latlng.lng]);
-        }
-
-
-        function clearRoute() {
-            if (currentRoute) {
-                // ลบเส้นทาง
-                mymap.removeControl(currentRoute);
-                currentRoute = null;
-
-                // ลบมาร์กเกอร์ปลายทาง
-                if (lastMarker) {
-                    mymap.removeLayer(lastMarker);
-                    lastMarker = null;
-                }
-
-                // รีเซ็ตค่าสถิติการนำทาง
-                document.getElementById("totalDistance").textContent = "- กม.";
-                document.getElementById("travelTime").textContent = "- นาที";
-
-                // ซ่อนปุ่มล้างการนำทาง
-                document.getElementById("clearRouteBtn").style.display = "none";
-
-                showNotification("ล้างเส้นทางการนำทางแล้ว", "info");
-            }
-        }
-        // แก้ไขฟังก์ชัน createRoute เพื่อให้แสดงปุ่มล้างการนำทาง
         function createRoute(end) {
             if (!currentLocationMarker) {
                 showNotification("กรุณาระบุตำแหน่งปัจจุบันก่อน", "warning");
@@ -778,13 +756,7 @@
                 },
                 showAlternatives: true,
                 altLineOptions: {
-                    styles: [
-                        {
-                            color: "#A5B4FC",
-                            opacity: 0.6,
-                            weight: 4,
-                        },
-                    ],
+                    styles: [{ color: "#A5B4FC", opacity: 0.6, weight: 4 }],
                 },
                 fitSelectedRoutes: true,
                 routeWhileDragging: true,
@@ -796,14 +768,16 @@
                 updateRouteStats(summary);
             });
 
-            // แสดงปุ่มล้างการนำทาง
             document.getElementById("clearRouteBtn").style.display = "inline-flex";
         }
-        function updateRouteStats(summary) {
-            document.getElementById("totalDistance").textContent =
-                (summary.totalDistance / 1000).toFixed(2) + " กม.";
-            document.getElementById("travelTime").textContent =
-                Math.round(summary.totalTime / 60) + " นาที";
+
+        function clearRoute() {
+            if (currentRoute) {
+                mymap.removeControl(currentRoute);
+                currentRoute = null;
+                document.getElementById("clearRouteBtn").style.display = "none";
+                showNotification("ล้างเส้นทางการนำทางแล้ว", "info");
+            }
         }
 
         function updateStats(coords) {
@@ -821,21 +795,51 @@
             }
         }
 
-        function findNearbyPlaces(coords) {
-            const nearby = Math.floor(Math.random() * 10) + 5;
-            document.getElementById("nearbyCount").textContent = nearby + " แห่ง";
+        function updateRouteStats(summary) {
+            document.getElementById("totalDistance").textContent =
+                (summary.totalDistance / 1000).toFixed(2) + " กม.";
+            document.getElementById("travelTime").textContent =
+                Math.round(summary.totalTime / 60) + " นาที";
         }
 
-        function showNearbyPlaces() {
-            if (!currentLocationMarker) {
-                showNotification("กรุณาระบุตำแหน่งปัจจุบันก่อน", "warning");
-                return;
+        function stopTracking() {
+            if (watchId) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+
+                if (popupUpdateInterval) {
+                    clearInterval(popupUpdateInterval);
+                    popupUpdateInterval = null;
+                }
+
+                showNotification("หยุดการติดตามตำแหน่งแล้ว", "info");
+                removeStopTrackingButton();
             }
-            showNotification("กำลังค้นหาสถานที่ใกล้เคียง...", "info");
-            findNearbyPlaces([
-                currentLocationMarker.getLatLng().lat,
-                currentLocationMarker.getLatLng().lng,
-            ]);
+        }
+
+        function addStopTrackingButton() {
+            removeStopTrackingButton();
+
+            const stopButton = document.createElement("button");
+            stopButton.className = "modern-button";
+            stopButton.id = "stopTrackingBtn";
+            stopButton.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                    <path d="M5 6.25a1.25 1.25 0 1 1 2.5 0v3.5a1.25 1.25 0 1 1-2.5 0v-3.5zm3.5 0a1.25 1.25 0 1 1 2.5 0v3.5a1.25 1.25 0 1 1-2.5 0v-3.5z"/>
+                </svg>
+                หยุดการติดตาม
+            `;
+            stopButton.onclick = stopTracking;
+
+            document.querySelector(".controls").appendChild(stopButton);
+        }
+
+        function removeStopTrackingButton() {
+            const existingButton = document.getElementById("stopTrackingBtn");
+            if (existingButton) {
+                existingButton.remove();
+            }
         }
 
         function toggleTheme() {
@@ -861,12 +865,63 @@
             document.body.appendChild(notification);
 
             setTimeout(() => {
-                notification.remove();
+                notification.classList.add("hide");
+                setTimeout(() => {
+                    notification.remove();
+                }, 300);
             }, 3000);
         }
 
-        initializeMap();
-    </script>
-</body>
+        async function handleLocationSelect(latlng) {
+            try {
+                showLoading();
 
+                const response = await fetch(
+                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latlng.lat}&lon=${latlng.lng}&accept-language=th`
+                );
+
+                if (!response.ok) {
+                    throw new Error("ไม่สามารถดึงข้อมูลสถานที่ได้");
+                }
+
+                const data = await response.json();
+                const locationName = data.display_name || "ไม่พบชื่อสถานที่";
+
+                if (lastMarker) {
+                    mymap.removeLayer(lastMarker);
+                }
+
+                lastMarker = L.marker([latlng.lat, latlng.lng]).addTo(mymap);
+
+                const popupContent = `
+                    <div class="popup-content">
+                        <h3>ตำแหน่งที่เลือก</h3>
+                        <p><strong>สถานที่:</strong> ${locationName}</p>
+                        <p><strong>พิกัด:</strong> ${latlng.lat.toFixed(
+                            5
+                        )}, ${latlng.lng.toFixed(5)}</p>
+                        <button onclick="createRoute([${latlng.lat}, ${latlng.lng
+                    }])" class="modern-button">นำทางไปยังจุดนี้</button>
+                    </div>
+                `;
+
+                lastMarker.bindPopup(popupContent).openPopup();
+
+                updateStats([latlng.lat, latlng.lng]);
+
+                showNotification(`เลือกตำแหน่ง: ${locationName}`, "info");
+            } catch (error) {
+                console.error("Error:", error);
+                showNotification("ไม่สามารถดึงข้อมูลสถานที่ได้", "error");
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // เริ่มการทำงานเมื่อโหลดหน้าเว็บ
+        document.addEventListener("DOMContentLoaded", () => {
+            initializeMap();
+        });
+    </script>
+    </body>
 </html>
