@@ -3,35 +3,34 @@
 
 header('Content-Type: application/json');
 
-// รวมไฟล์เชื่อมต่อฐานข้อมูล
-include './db.php';
+// เปิดการแสดงข้อผิดพลาด (สำหรับการ Debug)
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 
-// ดึงข้อมูลล่าสุด 1 รายการ
+// รวมไฟล์เชื่อมต่อฐานข้อมูล
+include 'db.php';
+
+// ตรวจสอบการเชื่อมต่อฐานข้อมูล
+if ($conn->connect_error) {
+    http_response_code(500);
+    echo json_encode(["status" => "error", "message" => "Database connection failed: " . $conn->connect_error]);
+    exit();
+}
+
+// ดึงข้อมูลการตรวจจับทั้งหมด
 $sql = "SELECT detections.id, detections.lat_cam, detections.long_cam, detections.elephant, 
-                detections.lat_ele, detections.long_ele, detections.distance_ele, detections.alert,
-                images.timestamp, images.image_path
+        detections.lat_ele, detections.long_ele, detections.distance_ele, 
+        images.timestamp, images.image_path
         FROM detections
         LEFT JOIN images ON detections.image_id = images.id
-        ORDER BY detections.id DESC LIMIT 1";
+        ORDER BY detections.id DESC";
 
 $result = $conn->query($sql);
 
-$markers = [];
-
-// ตรวจสอบว่าได้รับผลลัพธ์หรือไม่
-if ($result && $result->num_rows > 0) {
+if ($result) {
+    $markers = [];
     while ($row = $result->fetch_assoc()) {
-        // ตรวจสอบว่า image_path มีค่าและไม่เป็น null
-        if (!empty($row['image_path'])) {
-            if (strpos($row['image_path'], 'uploads/') === 0) {
-                $full_image_path = 'https://aprlabtop.com/elephant_api/' . $row['image_path'];
-            } else {
-                $full_image_path = 'https://aprlabtop.com/elephant_api/uploads/' . $row['image_path'];
-            }
-        } else {
-            $full_image_path = ''; // ตั้งค่าเป็นค่าว่างถ้า image_path เป็น null หรือไม่มีค่า
-        }
-
         $markers[] = [
             'id' => $row['id'],
             'lat_cam' => $row['lat_cam'],
@@ -40,14 +39,14 @@ if ($result && $result->num_rows > 0) {
             'long_ele' => $row['long_ele'],
             'distance_ele' => $row['distance_ele'],
             'timestamp' => $row['timestamp'],
-            'elephant' => filter_var($row['elephant'], FILTER_VALIDATE_BOOLEAN),
-            'image_path' => $full_image_path,
-            'alert' => filter_var($row['alert'], FILTER_VALIDATE_BOOLEAN)
+            'elephant' => filter_var($row['elephant'], FILTER_VALIDATE_BOOLEAN), // แปลงค่าเป็น boolean
+            'image_path' => 'https://aprlabtop.com/Honey_test/uploads/' . $row['image_path']
         ];
     }
+    echo json_encode(['status' => 'success', 'data' => $markers]);
+} else {
+    echo json_encode(['status' => 'error', 'message' => 'Failed to retrieve data: ' . $conn->error]);
 }
-
-echo json_encode(['status' => 'success', 'data' => $markers]);
 
 $conn->close();
 ?>
