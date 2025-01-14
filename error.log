@@ -1,0 +1,10 @@
+[15-Dec-2024 19:02:39 Asia/Bangkok] PHP Warning:  require_once(config.php): Failed to open stream: No such file or directory in /var/www/vhosts/aprlabtop.com/httpdocs/Honey_test/admin_dashboard.php on line 25
+[15-Dec-2024 19:02:39 Asia/Bangkok] PHP Fatal error:  Uncaught Error: Failed opening required 'config.php' (include_path='.:/opt/plesk/php/8.3/share/pear') in /var/www/vhosts/aprlabtop.com/httpdocs/Honey_test/admin_dashboard.php:25
+Stack trace:
+#0 {main}
+  thrown in /var/www/vhosts/aprlabtop.com/httpdocs/Honey_test/admin_dashboard.php on line 25
+[15-Dec-2024 19:02:57 Asia/Bangkok] PHP Warning:  require_once(config.php): Failed to open stream: No such file or directory in /var/www/vhosts/aprlabtop.com/httpdocs/Honey_test/admin_dashboard.php on line 25
+[15-Dec-2024 19:02:57 Asia/Bangkok] PHP Fatal error:  Uncaught Error: Failed opening required 'config.php' (include_path='.:/opt/plesk/php/8.3/share/pear') in /var/www/vhosts/aprlabtop.com/httpdocs/Honey_test/admin_dashboard.php:25
+Stack trace:
+#0 {main}
+  thrown in /var/www/vhosts/aprlabtop.com/httpdocs/Honey_test/admin_dashboard.php on line 25
