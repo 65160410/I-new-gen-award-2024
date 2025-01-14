@@ -286,18 +286,18 @@ def detect_objects(image_path, primary_model, class_names_primary, conf_threshol
         primary_results = primary_model(image_path, conf=conf_threshold)
         for result in primary_results:
             if result.boxes is not None:
-                for box, cls in zip(result.boxes.xyxy, result.boxes.cls):
+                for box, cls, conf in zip(result.boxes.xyxy, result.boxes.cls, result.boxes.conf):
                     cls = int(cls)
                     class_name = class_names_primary.get(cls, None)
                     if class_name is not None and class_name.lower() in ['elephant', 'car']:
                         # Get the confidence for this class
-                        confidence = float(result.boxes.conf[result.boxes.cls.tolist().index(cls)]) if result.boxes.conf is not None else 0.0
+                        confidence = float(conf) if conf is not None else 0.0
                         detected_objects.append({
                             "class_name": class_name,
                             "box": box.cpu().numpy().tolist(),
                             "confidence": confidence
                         })
-                        print(f"[DEBUG] Detected {class_name} with box {box.cpu().numpy()} using primary model.")
+                        print(f"[DEBUG] Detected {class_name} with box {box.cpu().numpy()} and confidence {confidence} using primary model.")
 
         # Apply Non-Max Suppression (NMS) to remove duplicate car detections
         cars = [obj for obj in detected_objects if obj['class_name'].lower() == 'car']
@@ -325,7 +325,7 @@ def detect_objects(image_path, primary_model, class_names_primary, conf_threshol
         print(f"[ERROR in detect_objects]: {e}")
         return []
 
-def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, camera_bearing_degrees, elephant_distance_m, image_path):
+def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, camera_bearing_degrees, y_positions, params, image_path=None):
     """
     Creates a payload for the API.
 
@@ -335,48 +335,74 @@ def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, ca
     - camera_long: Camera longitude.
     - objects_detected: List of detected objects.
     - camera_bearing_degrees: Camera bearing in degrees.
-    - elephant_distance_m: Distance of the elephant in meters.
-    - image_path: Path to the image.
+    - y_positions: Y-coordinates of perspective lines.
+    - params: Parameters dictionary.
+    - image_path: Path to the image (optional).
 
     Returns:
     - Payload dictionary.
     """
     try:
-        elephant_lat = None
-        elephant_long = None
+        elephant_lats = []
+        elephant_longs = []
+        elephant_distances = []
+        car_count = 0
+        elephant_count = 0
         alert = False
-        elephant_detected = False
-        car_detected = False
+
+        th_tz = pytz.timezone('Asia/Bangkok')
+        th_time = datetime.now(th_tz)
+        timestamp = th_time.strftime("%Y-%m-%d %H:%M:%S")
 
         if objects_detected:
             for obj in objects_detected:
                 if obj['class_name'].lower() == 'elephant':
-                    elephant_detected = True
+                    elephant_count += 1
+                    if y_positions:
+                        # Extract the bottom y-coordinate of the bounding box
+                        _, _, _, y2 = map(int, obj['box'])
+                        elephant_bottom_y = y2
+                        print(f"[DEBUG] Elephant bottom y-coordinate: {elephant_bottom_y}")
+
+                        # Calculate distance based on the closest perspective line
+                        diff = np.abs(np.array(y_positions) - elephant_bottom_y)
+                        closest_line_idx = np.argmin(diff)
+                        elephant_distance_m = params['distance_between_lines_meters'] * (closest_line_idx + 1)
+                        print(f"[DEBUG] Elephant detected at y={elephant_bottom_y}, closest line index={closest_line_idx}, distance={elephant_distance_m} meters")
+                    else:
+                        elephant_distance_m = None
+                        print("[DEBUG] y_positions unavailable. Skipping distance calculation.")
+
+                    if elephant_distance_m is not None:
+                        lat, lon = calculate_destination_latlong(camera_lat, camera_long, elephant_distance_m, camera_bearing_degrees)
+                        if lat is not None and lon is not None:
+                            elephant_lats.append([lat])
+                            elephant_longs.append([lon])
+                            elephant_distances.append(elephant_distance_m)
+                    else:
+                        elephant_lats.append([None])
+                        elephant_longs.append([None])
+                        elephant_distances.append(None)
+
                 elif obj['class_name'].lower() == 'car':
-                    car_detected = True
+                    car_count += 1
 
-        if elephant_detected and elephant_distance_m is not None:
-            elephant_lat, elephant_long = calculate_destination_latlong(camera_lat, camera_long, elephant_distance_m, camera_bearing_degrees)
-
-        if elephant_detected and car_detected:
+        if elephant_count > 0 and car_count > 0:
             alert = True
 
-        # Modify the condition to encode image if elephant is detected, regardless of road_found
-        image_data = encode_image(image_path) if elephant_detected else None
-
-        # Get current time in Thailand timezone
-        th_tz = pytz.timezone('Asia/Bangkok')
-        th_time = datetime.now(th_tz)
-        timestamp = th_time.strftime("%Y-%m-%d %H:%M:%S")
+        # Encode image if at least one elephant is detected
+        image_data = encode_image(image_path) if elephant_count > 0 and image_path is not None else None
 
         payload = {
             "camera_id": str(camera_id),
             "camera_lat": float(camera_lat),
             "camera_long": float(camera_long),
-            "elephant": elephant_detected,
-            "elephant_lat": float(elephant_lat) if elephant_detected and elephant_lat is not None else None,
-            "elephant_long": float(elephant_long) if elephant_detected and elephant_long is not None else None,
-            "elephant_distance": int(elephant_distance_m) if elephant_detected and elephant_distance_m is not None else None,
+            "elephant": elephant_count > 0,
+            "elephant_lat": elephant_lats if elephant_count > 0 else [],
+            "elephant_long": elephant_longs if elephant_count > 0 else [],
+            "elephant_distance": elephant_distances if elephant_count > 0 else [],
+            "car_count": car_count,
+            "elephant_count": elephant_count,
             "image": image_data,
             "alert": alert,
             "timestamp": timestamp
@@ -421,7 +447,6 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
             PARAMS
         )
 
-        # **Modification Start**
         # Always perform object detection, regardless of road_found
         objects_detected = detect_objects(
             temp_image_path,
@@ -430,32 +455,11 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
             conf_threshold=PARAMS['confidence_object']
         )
         print("[DEBUG] Object detection completed regardless of road detection.")
-        # **Modification End**
 
         if not objects_detected:
             print("[DEBUG] No objects detected.")
         else:
             print(f"[DEBUG] Detected {len(objects_detected)} objects.")
-
-        # **Modification Start**
-        # Calculate elephant distance only if road is found
-        elephant_distance_m = None
-        y_positions_arr = np.array(y_positions) if y_positions else np.array([])
-        for obj in objects_detected:
-            if obj['class_name'].lower() == 'elephant':
-                if road_found and y_positions_arr.size > 0:
-                    _, _, _, y2 = map(int, obj['box'])
-                    elephant_bottom_y = y2
-                    print(f"[DEBUG] Elephant bottom y-coordinate: {elephant_bottom_y}")
-
-                    diff = np.abs(y_positions_arr - elephant_bottom_y)
-                    closest_line_idx = np.argmin(diff)
-                    elephant_distance_m = PARAMS['distance_between_lines_meters'] * (closest_line_idx + 1)
-                    print(f"[DEBUG] Elephant detected at y={elephant_bottom_y}, closest line index={closest_line_idx}, distance={elephant_distance_m} meters")
-                else:
-                    print("[DEBUG] Road not found or y_positions unavailable. Skipping distance calculation.")
-                break  # Consider only the first detected elephant
-        # **Modification End**
 
         # Create payload
         data = create_test_payload(
@@ -464,13 +468,10 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
             camera_long=CONFIG['camera_long'],
             objects_detected=objects_detected,
             camera_bearing_degrees=CONFIG['bearing_degrees'],
-            elephant_distance_m=elephant_distance_m,
-            image_path=temp_image_path if (elephant_distance_m is not None or (any(obj['class_name'].lower() == 'elephant' for obj in objects_detected))) else None  # Send image if elephant detected
+            y_positions=y_positions,
+            params=PARAMS,
+            image_path=temp_image_path if any(obj['class_name'].lower() == 'elephant' for obj in objects_detected) else None
         )
-
-        # If no elephant detected, set image to null
-        if not any(obj['class_name'].lower() == 'elephant' for obj in objects_detected):
-            data['image'] = None
 
         # Debug: Print payload (limit image data)
         data_to_print = data.copy()
@@ -557,7 +558,7 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
 
 def main():
     """
-    Initializes models, camera, and starts the main loop to process frames every 30 seconds while displaying a live feed.
+    Initializes models, camera, and starts the main loop to process frames every 10 seconds while displaying a live feed.
     """
     # Configuration
     CONFIG = {
