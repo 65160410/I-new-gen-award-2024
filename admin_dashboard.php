@@ -57,10 +57,11 @@ function translateStatus($status) {
     }
 }
 
+// ฟังก์ชัน Reverse Geocoding
 function getAddressFromCoords($lat, $lng) {
     $url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat={$lat}&lon={$lng}&addressdetails=1";
     
-    // Specify User-Agent as per Nominatim's policy
+    // ระบุ User-Agent ตามนโยบายของ Nominatim
     $opts = [
         'http' => [
             'header' => "User-Agent: YourAppName/1.0 (your.email@example.com)\r\n"
@@ -75,7 +76,7 @@ function getAddressFromCoords($lat, $lng) {
     $data = json_decode($response, true);
     if (isset($data['address'])) {
         $address = $data['address'];
-        // Construct address from received data
+        // สร้างที่อยู่จากข้อมูลที่ได้รับ
         $parts = [];
         if (isset($address['road'])) {
             $parts[] = $address['road'];
@@ -107,14 +108,13 @@ function getAddressFromCoords($lat, $lng) {
     }
 }
 
-
 // ฟังก์ชันแปลง Intensity Level และกำหนดคลาสสี
 function getIntensityInfo($elephant, $alert, $distance) {
     if (floatval($distance) <= 1) {
         return ['text' => 'ฉุกเฉิน', 'class' => 'bg-red-600 text-white'];
     } elseif ($elephant && $alert) {
         return ['text' => 'ความเสี่ยงสูง', 'class' => 'bg-red-300 text-red-800'];
-    } elseif ($elephant && !$alert) { // Adjust condition as needed
+    } elseif ($elephant && !$alert) {
         return ['text' => 'ความเสี่ยงปานกลาง', 'class' => 'bg-yellow-200 text-gray-700'];
     } else {
         return ['text' => 'ปกติ', 'class' => 'bg-white text-black'];
@@ -127,12 +127,12 @@ if (empty($_SESSION['csrf_token'])) {
 }
 $csrf_token = $_SESSION['csrf_token'];
 
-// แบ่งหน้าข้อมูล
+// Pagination setup
 $perPage = 10;
 $page = isset($_GET['page']) && is_numeric($_GET['page']) ? intval($_GET['page']) : 1;
 $start = ($page - 1) * $perPage;
 
-// อ่านข้อมูลจากไฟล์ camera_locations.txt เข้าสู่ associative array
+// อ่านข้อมูลจากไฟล์ camera_locations.txt เป็น associative array
 $file = 'camera_locations.txt';
 $camera_locations = [];
 if (file_exists($file)) {
@@ -149,7 +149,7 @@ if (file_exists($file)) {
     error_log("camera_locations.txt not found.");
 }
 
-// Query detections + images พร้อมฟิลด์ status และคำนวณ elephant_count
+// Query detections + images พร้อมฟิลด์ status และคำนวณจำนวนสัตว์
 $sql_detections = "
     SELECT
         detections.id,
@@ -159,7 +159,9 @@ $sql_detections = "
         detections.lat_ele, detections.long_ele,
         detections.distance_ele,
         detections.alert,
-        detections.status, 
+        detections.status,
+		detections.car,
+		detections.elephant_count,
         images.timestamp,
         images.image_path
     FROM detections
@@ -180,12 +182,12 @@ $markers = [];
 $missing_coordinates = [];
 $last_id = 0;
 
-// สร้างแคชที่อยู่เพื่อหลีกเลี่ยงการเรียก API ซ้ำๆ
+// สร้างแคชที่อยู่เพื่อหลีกเลี่ยงการเรียก API ซ้ำ
 $address_cache = [];
 
 if ($result_detections && $result_detections->num_rows > 0) {
     while ($row = $result_detections->fetch_assoc()) {
-        // สร้าง path รูป
+        // จัดการ path ของรูป
         if (!empty($row['image_path'])) {
             if (strpos($row['image_path'], 'uploads/') === 0) {
                 $full_image_path = 'https://aprlabtop.com/elephant_api/' . $row['image_path'];
@@ -200,28 +202,20 @@ if ($result_detections && $result_detections->num_rows > 0) {
         $elephant_lats = json_decode($row['lat_ele'], true);
         $elephant_longs = json_decode($row['long_ele'], true);
         
-        // กำหนด elephant_count และทำให้เป็นอาร์เรย์เสมอ
+        // กำหนด elephant_count
         if (is_array($elephant_lats) && is_array($elephant_longs) && count($elephant_lats) === count($elephant_longs)) {
-            // ไม่ตรวจสอบความถูกต้องของแต่ละพิกัด
             $elephant_count = count($elephant_lats);
-            
-            // สร้างอาร์เรย์ที่มีพิกัดตามที่ส่งมา
             $valid_prefs = [
                 'lat' => $elephant_lats,
                 'lng' => $elephant_longs
             ];
-            
         } elseif (is_numeric($elephant_lats) && is_numeric($elephant_longs)) {
-            // ตรวจสอบว่าพิกัดเป็นตัวเลข
             $elephant_count = 1;
             $valid_prefs = [
                 'lat' => [$elephant_lats],
                 'lng' => [$elephant_longs]
             ];
         } else {
-            // กรณีข้อมูลไม่ครบถ้วนหรือชนิดข้อมูลไม่ถูกต้อง
-            $elephant_lats = [];
-            $elephant_longs = [];
             $elephant_count = 0;
             $valid_prefs = [
                 'lat' => [],
@@ -229,39 +223,56 @@ if ($result_detections && $result_detections->num_rows > 0) {
             ];
         }
 
-        // เช็คพิกัด
+        // ตรวจสอบพิกัดกล้อง/ช้างว่า null หรือไม่
         $has_null_coords = (
             is_null($row['lat_cam']) || is_null($row['long_cam']) ||
             empty($valid_prefs['lat']) || empty($valid_prefs['lng'])
         );
 
-        // รับที่อยู่ของ Camera Location จาก id_cam
+        // ระบุที่อยู่จากไฟล์ camera_locations.txt หรือ Reverse Geocoding
         $camera_address = "ไม่ทราบสถานที่";
         if (!empty($row['id_cam'])) {
             if (isset($camera_locations[$row['id_cam']])) {
                 $camera_address = $camera_locations[$row['id_cam']];
             } else {
-                // ถ้าไม่พบ id_cam ในไฟล์ .txt ให้ใช้ reverse geocoding
+                // ถ้าไม่พบ id_cam ในไฟล์ ให้ใช้ reverse geocoding
                 if (!is_null($row['lat_cam']) && !is_null($row['long_cam'])) {
                     if (is_numeric($row['lat_cam']) && is_numeric($row['long_cam'])) {
                         $coord_key = $row['lat_cam'] . "," . $row['long_cam'];
                         if (isset($address_cache[$coord_key])) {
-                            // ใช้แคชที่อยู่ถ้ามี
                             $camera_address = $address_cache[$coord_key];
                         } else {
-                            // เรียกใช้ฟังก์ชัน Reverse Geocoding
                             $camera_address = getAddressFromCoords($row['lat_cam'], $row['long_cam']);
-                            // เก็บลงในแคช
                             $address_cache[$coord_key] = $camera_address;
                         }
                     }
                 }
             }
         }
+		    // ประมวลผลจำนวนรถ
+		$car = isset($row['car']) && is_numeric($row['car']) ? intval($row['car']) : 0;
+
+		// ประมวลผลจำนวนช้าง
+		$elephant_count = isset($row['elephant_count']) && is_numeric($row['elephant_count']) ? intval($row['elephant_count']) : 0;
+
+		// สร้างอาร์เรย์สำหรับสิ่งที่ตรวจจับ
+		$detection_types = [];
+
+		if ($car > 0) {
+			$detection_types[] = "รถ ". $car . " คัน";
+		}
+
+		if ($elephant_count > 0) {
+			$detection_types[] = "ช้าง ". $elephant_count . " ตัว";
+		}
+		
+		// สร้างข้อความแสดงผล
+    	$detection_display = !empty($detection_types) ? implode(", ", $detection_types) : '<span class="text-red-800">ไม่มีการตรวจจับ</span>';
 
         // กำหนด Intensity Info
         $intensityInfo = getIntensityInfo($row['elephant'], $row['alert'], $row['distance_ele']);
 
+        // แยกเป็นสองกลุ่ม: มี/ไม่มีพิกัดครบ
         if ($has_null_coords) {
             $missing_coordinates[] = [
                 'id'             => $row['id'],
@@ -274,11 +285,13 @@ if ($result_detections && $result_detections->num_rows > 0) {
                 'image_path'     => $full_image_path,
                 'alert'          => filter_var($row['alert'], FILTER_VALIDATE_BOOLEAN),
                 'elephant'       => filter_var($row['elephant'], FILTER_VALIDATE_BOOLEAN),
-                'status'         => $row['status'], // เพิ่มฟิลด์ status
-                'camera_address' => $camera_address, // เพิ่มที่อยู่
+                'status'         => $row['status'],
+                'camera_address' => $camera_address,
+				'car'      => $car,
                 'intensity_text' => $intensityInfo['text'],
                 'intensity_class'=> $intensityInfo['class'],
-                'elephant_count' => $elephant_count // เพิ่ม elephant_count
+                'elephant_count' => $elephant_count,
+				'detection_display' => $detection_display 
             ];
         } else {
             $markers[] = [
@@ -292,14 +305,17 @@ if ($result_detections && $result_detections->num_rows > 0) {
                 'elephant'       => filter_var($row['elephant'], FILTER_VALIDATE_BOOLEAN),
                 'image_path'     => $full_image_path,
                 'alert'          => filter_var($row['alert'], FILTER_VALIDATE_BOOLEAN),
-                'status'         => $row['status'], 
-                'camera_address' => $camera_address, // เพิ่มที่อยู่
+                'status'         => $row['status'],
+                'camera_address' => $camera_address,
+				'car'      => $car,
                 'intensity_text' => $intensityInfo['text'],
                 'intensity_class'=> $intensityInfo['class'],
-                'elephant_count' => $elephant_count // เพิ่ม elephant_count
+                'elephant_count' => $elephant_count,
+				'detection_display' => $detection_display
             ];
         }
-
+		
+		
         // เก็บ ID การตรวจจับล่าสุด
         if ($row['id'] > $last_id) {
             $last_id = $row['id'];
@@ -308,22 +324,18 @@ if ($result_detections && $result_detections->num_rows > 0) {
 }
 $stmt_detections->close();
 
-// ฟังก์ชัน updateStatus คงที่ไว้ไม่เปลี่ยนแปลง
+// ฟังก์ชัน updateStatus (ถ้ามีการอัปเดตสถานะผ่านฟอร์มหรือ AJAX)
 function updateStatus($id, $status) {
     global $conn;
-
-    // ตรวจสอบก่อนว่าค่าสถานะไม่เป็น null หรือเป็นค่าว่าง
     if (empty($status)) {
         error_log("Status is empty for detection ID: " . $id);
         return false;
     }
-
     $stmt = $conn->prepare("UPDATE detections SET status = ? WHERE id = ?");
     if (!$stmt) {
         error_log("Prepare failed: " . $conn->error);
         return false;
     }
-
     $stmt->bind_param("si", $status, $id);
     if ($stmt->execute()) {
         $stmt->close();
@@ -335,20 +347,18 @@ function updateStatus($id, $status) {
     }
 }
 
-// ลบการตรวจสอบ POST สำหรับการอัปเดตสถานะ
+// Handle AJAX POST for status update
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
-    // Retrieve and sanitize inputs
     $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
     $status = isset($_POST['status']) ? strtolower(trim($_POST['status'])) : '';
 
     // Validate status
     $allowed_statuses = ['pending', 'completed'];
     if (in_array($status, $allowed_statuses) && $id > 0) {
-        // Start transaction
+        // Transaction
         $conn->begin_transaction();
-
         try {
-            // 1. Update status in solutions_admin table for all records with the detection_id
+            // 1. Update status in solutions_admin
             $update_solution_status_sql = "UPDATE solutions_admin SET solution_status = ? WHERE detection_id = ?";
             $stmt_update_solution_status = $conn->prepare($update_solution_status_sql);
             if (!$stmt_update_solution_status) {
@@ -360,7 +370,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
             }
             $stmt_update_solution_status->close();
 
-            // 2. Update status in detections table
+            // 2. Update status in detections
             $update_detection_status_sql = "UPDATE detections SET status = ? WHERE id = ?";
             $stmt_update_detection_status = $conn->prepare($update_detection_status_sql);
             if (!$stmt_update_detection_status) {
@@ -372,12 +382,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
             }
             $stmt_update_detection_status->close();
 
-            // Commit transaction
             $conn->commit();
-
             echo json_encode(['status' => 'success']);
         } catch (Exception $e) {
-            // Rollback transaction in case of error
             $conn->rollback();
             http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
@@ -386,10 +393,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'Invalid status or ID.']);
     }
-    exit; // Terminate script after handling AJAX
+    exit; 
 }
 
-// คำนวณจำนวนหน้า
+// นับจำนวนแถวทั้งหมดสำหรับ pagination
 $sql_count = "SELECT COUNT(id) AS total FROM detections";
 $count_result = $conn->query($sql_count);
 if ($count_result) {
@@ -416,23 +423,18 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
-    /* ใช้ Tailwind เพื่อกำหนดฟอนต์ */
     body {
         font-family: 'Prompt', sans-serif;
     }
-
-    /* Modal */
     .modal {
         display: none;
     }
     .clickable-row {
         cursor: pointer;
     }
-    
     .clickable-row:hover {
-        background-color: #f1f5f9; /* Equivalent to Tailwind's bg-gray-100 */
+        background-color: #f1f5f9; /* bg-gray-100 */
     }
-        /* ไอคอนรูปดินสอ */
     .edit-icon {
         display: inline-flex;
         align-items: center;
@@ -440,17 +442,14 @@ $conn->close();
         font-size: 16px;
         text-decoration: none;
     }
-
     .edit-icon i {
         margin-right: 5px;
         font-size: 18px;
     }
-
     .edit-icon:hover {
-        color: #007bff; /* สีที่เปลี่ยนเมื่อ hover */
-        transition: color 0.3s ease; /* การเปลี่ยนแปลงสีอย่างนุ่มนวล */
+        color: #007bff;
+        transition: color 0.3s ease;
     }
-
     </style>
 </head>
 <body class="bg-white text-gray-800">
@@ -534,9 +533,9 @@ $conn->close();
                                         <td class="border px-4 py-2">
                                             <?= safe_htmlspecialchars("กล้องตัวนี้อยู่ที่ " . $marker['camera_address']); ?>
                                         </td>
-                                        <td class="border px-4 py-2">
-                                            <?= $marker['elephant_count'] > 0 ? safe_htmlspecialchars($marker['elephant_count']) . " ช้าง" : '<span class="text-red-800">Elephant missing</span>' ?>
-                                        </td>
+										<td class="border px-4 py-2">
+											<?= $marker['detection_display'] ?>
+										</td>
                                         <td class="border px-4 py-2 <?= safe_htmlspecialchars($marker['intensity_class']) ?>">
                                             <?= safe_htmlspecialchars($marker['intensity_text']) ?>
                                         </td>
@@ -560,7 +559,7 @@ $conn->close();
                                                 // แสดงสถานะที่แปลแล้ว
                                                 echo translateStatus($marker['status']);
                                                 
-                                                // ตรวจสอบสถานะ ถ้าสถานะเป็น 'pending' ให้แสดงไอคอนดินสอ
+                                                // ถ้าสถานะเป็น 'pending' ให้แสดงไอคอนดินสอเพื่อลิงก์ไป solutions_admin
                                                 if ($marker['status'] === 'pending') {
                                                     echo ' <a href="solutions_admin.php?id=' . safe_htmlspecialchars($marker['id']) . '" class="edit-icon text-blue-600 hover:text-blue-800"><i class="fas fa-pencil-alt"></i></a>';
                                                 }
@@ -575,9 +574,9 @@ $conn->close();
                                         <td class="border px-4 py-2">
                                             <?= safe_htmlspecialchars("กล้องตัวนี้อยู่ที่ " . $marker['camera_address']); ?>
                                         </td>
-                                        <td class="border px-4 py-2">
-                                            <?= $marker['elephant_count'] > 0 ? safe_htmlspecialchars($marker['elephant_count']) . " ช้าง" : '<span class="text-red-800">Elephant missing</span>' ?>
-                                        </td>
+										<td class="border px-4 py-2">
+											<?= $marker['detection_display'] ?>
+										</td>
                                         <td class="border px-4 py-2 <?= safe_htmlspecialchars($marker['intensity_class']) ?>">
                                             <?= safe_htmlspecialchars($marker['intensity_text']) ?>
                                         </td>
@@ -598,10 +597,7 @@ $conn->close();
                                         </td>
                                         <td class="border px-4 py-2">
                                             <?php
-                                                // แสดงสถานะที่แปลแล้ว
                                                 echo translateStatus($marker['status']);
-                                                
-                                                // ตรวจสอบสถานะ ถ้าสถานะเป็น 'pending' ให้แสดงไอคอนดินสอ
                                                 if ($marker['status'] === 'pending') {
                                                     echo ' <a href="solutions_admin.php?id=' . safe_htmlspecialchars($marker['id']) . '" class="edit-icon text-blue-600 hover:text-blue-800"><i class="fas fa-pencil-alt"></i></a>';
                                                 }
@@ -648,14 +644,13 @@ $conn->close();
 </div>
 <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
 
-
 <script>
     // Data from PHP
     let missingData = <?php echo json_encode($missing_coordinates, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_AMP|JSON_HEX_QUOT); ?>;
     let initialMarkers = <?php echo json_encode($markers, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_AMP|JSON_HEX_QUOT); ?>;
-    let lastDetectionID = <?= $last_id ?>; // เก็บ ID การตรวจจับล่าสุด
+    let lastDetectionID = <?= $last_id ?>;
 
-    // Escape
+    // Escape HTML
     function safe_htmlspecialchars(str) {
         if (typeof str !== 'string') return '';
         return str
@@ -703,24 +698,21 @@ $conn->close();
     }
     function closeImageModal() {
         const modal = document.getElementById("imageModal");
-        const modalImg = document.getElementById("modalImage");
         modal.classList.add('hidden');
-        modalImg.src = "";
+        document.getElementById("modalImage").src = "";
     }
     window.addEventListener('click', e => {
         if (e.target.id === "imageModal") closeImageModal();
     });
 
-    // ฟังก์ชันเพิ่มแถวข้อมูลลงในตารางสำหรับกรณีพิกัดไม่ครบ
+    // เพิ่มแถวข้อมูล (กรณีพิกัดกล้อง/ช้างไม่ครบ)
     function addMissingDetectionToTable(d) {
         const tb = document.getElementById("detection-table-body");
         const row = document.createElement("tr");
 
-        // แปลง distance_ele และ flags เป็นข้อความและกำหนดคลาสสี
         const intensityLevel = getIntensityLevel(d.elephant, d.alert, d.distance_ele);
         const intensityClass = getIntensityClass(intensityLevel);
 
-        // สร้างข้อความสำหรับตำแหน่งกล้อง
         let cameraAddressText = '';
         if (d.camera_address !== "ไม่ทราบสถานที่") {
             cameraAddressText = safe_htmlspecialchars(d.camera_address);
@@ -734,53 +726,8 @@ $conn->close();
 
         row.innerHTML = `
             <td class="border px-4 py-2">${safe_htmlspecialchars(d.timestamp)}</td>
-            <td class="border px-4 py-2">
-                ${cameraAddressText}
-            </td>
-            <td class="border px-4 py-2">
-                ${ d.elephant_count > 0 ? `${safe_htmlspecialchars(d.elephant_count)} ช้าง` : '<span class="text-red-800">Elephant missing</span>' }
-            </td>
-            <td class="border px-4 py-2 ${intensityClass}">${intensityLevel}</td>
-            <td class="border px-4 py-2">
-                ${
-                    d.image_path
-                        ? `<button class="bg-purple-500 text-white px-3 py-1 rounded hover:bg-purple-600 view-image-button" data-image="${safe_htmlspecialchars(d.image_path)}">View Image</button>`
-                        : '<span class="text-gray-500">No Image</span>'
-                }
-            </td>
-            <td class="border px-4 py-2">
-                <a href="test_map.php?type=cam&id=${encodeURIComponent(d.id)}&lat=${encodeURIComponent(d.lat_cam)}&lng=${encodeURIComponent(d.long_cam)}" class="text-blue-500 hover:underline">Map</a>
-            </td>
-            <td class="border px-4 py-2">
-                ${ safe_htmlspecialchars(d.status) }
-                ${ d.status === 'pending' ? ` <a href="solutions_admin.php?id=${safe_htmlspecialchars(d.id)}" class="edit-icon text-blue-600 hover:text-blue-800"><i class="fas fa-pencil-alt"></i></a>` : '' }
-            </td>
-        `;
-        tb.prepend(row);
-
-        // จำกัดจำนวนแถวไม่เกิน 10 แถว
-        while(tb.rows.length > 10){
-            tb.deleteRow(-1); // ลบแถวสุดท้าย
-        }
-    }
-
-    // ฟังก์ชันเพิ่มแถวข้อมูลลงในตารางสำหรับกรณีพิกัดครบ
-    function addDetectionToTable(d){
-        const tb = document.getElementById('detection-table-body');
-        const row = document.createElement('tr');
-
-        // แปลง distance_ele และ flags เป็นข้อความและกำหนดคลาสสี
-        const intensityLevel = getIntensityLevel(d.elephant, d.alert, d.distance_ele);
-        const intensityClass = getIntensityClass(intensityLevel);
-
-        row.innerHTML=`
-            <td class="border px-4 py-2">${safe_htmlspecialchars(d.timestamp)}</td>
-            <td class="border px-4 py-2">
-                ${safe_htmlspecialchars("กล้องตัวนี้อยู่ที่ " + d.camera_address)}
-            </td>
-            <td class="border px-4 py-2">
-                ${d.elephant_count > 0 ? `${safe_htmlspecialchars(d.elephant_count)} ช้าง` : '<span class="text-red-800">Elephant missing</span>'}
-            </td>
+            <td class="border px-4 py-2">${cameraAddressText}</td>
+            <td class="border px-4 py-2">${d.detection_display}</td>
             <td class="border px-4 py-2 ${intensityClass}">${intensityLevel}</td>
             <td class="border px-4 py-2">
                 ${
@@ -793,21 +740,56 @@ $conn->close();
                 <a href="test_map.php?type=cam&id=${encodeURIComponent(d.id)}&lat=${encodeURIComponent(d.lat_cam)}&lng=${encodeURIComponent(d.long_cam)}" class="text-blue-500 hover:underline">Map</a>
             </td>
             <td class="border px-4 py-2">
-                ${ safe_htmlspecialchars(d.status) }
+                ${safe_htmlspecialchars(d.status)}
                 ${ d.status === 'pending' ? ` <a href="solutions_admin.php?id=${safe_htmlspecialchars(d.id)}" class="edit-icon text-blue-600 hover:text-blue-800"><i class="fas fa-pencil-alt"></i></a>` : '' }
             </td>
         `;
         tb.prepend(row);
 
-        // จำกัดจำนวนแถวไม่เกิน 10 แถว
+        // ลบแถวท้ายสุดถ้าเกิน 10
         while(tb.rows.length > 10){
-            tb.deleteRow(-1); // ลบแถวสุดท้าย
+            tb.deleteRow(-1);
         }
     }
 
-    // handleNewDetection (แจ้งเตือน)
+    // เพิ่มแถวข้อมูล (กรณีมีพิกัดกล้อง/ช้างครบ)
+    function addDetectionToTable(d){
+        const tb = document.getElementById('detection-table-body');
+        const row = document.createElement('tr');
+
+        const intensityLevel = getIntensityLevel(d.elephant, d.alert, d.distance_ele);
+        const intensityClass = getIntensityClass(intensityLevel);
+
+        row.innerHTML=`
+            <td class="border px-4 py-2">${safe_htmlspecialchars(d.timestamp)}</td>
+            <td class="border px-4 py-2">กล้องตัวนี้อยู่ที่ ${safe_htmlspecialchars(d.camera_address)}</td>
+            <td class="border px-4 py-2">${d.detection_display}</td>
+            <td class="border px-4 py-2 ${intensityClass}">${intensityLevel}</td>
+            <td class="border px-4 py-2">
+                ${
+                    d.image_path
+                    ? `<button class="bg-purple-500 text-white px-3 py-1 rounded hover:bg-purple-600 view-image-button" data-image="${safe_htmlspecialchars(d.image_path)}">View Image</button>`
+                    : '<span class="text-gray-500">No Image</span>'
+                }
+            </td>
+            <td class="border px-4 py-2">
+                <a href="test_map.php?type=cam&id=${encodeURIComponent(d.id)}&lat=${encodeURIComponent(d.lat_cam)}&lng=${encodeURIComponent(d.long_cam)}" class="text-blue-500 hover:underline">Map</a>
+            </td>
+            <td class="border px-4 py-2">
+                ${safe_htmlspecialchars(d.status)}
+                ${ d.status === 'pending' ? ` <a href="solutions_admin.php?id=${safe_htmlspecialchars(d.id)}" class="edit-icon text-blue-600 hover:text-blue-800"><i class="fas fa-pencil-alt"></i></a>` : '' }
+            </td>
+        `;
+        tb.prepend(row);
+
+        // ลบแถวท้ายสุดถ้าเกิน 10
+        while(tb.rows.length > 10){
+            tb.deleteRow(-1);
+        }
+    }
+
     let alertTimeout = null;
-    let lastDetectionTime = null; // เริ่มต้นเป็น null เพราะยังไม่ได้รับการแจ้งเตือน
+    let lastDetectionTime = null;
 
     function showHeaderAlert(msg, colorClass) {
         const hd = document.getElementById("headerAlert");
@@ -849,7 +831,7 @@ $conn->close();
         alertTimeout = setTimeout(() => {
             hideHeaderAlert();
             hidePopup();
-            lastDetectionTime = null; // รีเซ็ตหลังจากซ่อนการแจ้งเตือน
+            lastDetectionTime = null;
         }, 60000); // 1 นาที
     }
 
@@ -858,31 +840,22 @@ $conn->close();
         let colorClass = '';
         let needAlert = false;
 
-        // เงื่อนไขฉุกเฉิน
         if (d.distance_ele <= 1) {
             message = `⚠️ ฉุกเฉิน! ช้างเข้าใกล้มาก! ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
-            colorClass = 'bg-red-600 text-white'; // กำหนดคลาส CSS สำหรับฉุกเฉิน
+            colorClass = 'bg-red-600 text-white';
             needAlert = true;
         }
         else {
-            // หาก elephant=true & alert=true
             if (d.elephant && d.alert) {
                 message = `⚠️ เจอช้างและรถ! ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
                 colorClass = 'bg-red-300 text-red-800';
                 needAlert = true;
             }
-            // หาก elephant=true & alert=false
             else if (d.elephant && !d.alert) {
                 message = `⚠️ พบช้าง! (ไม่มี Alert รถ) ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
-                colorClass = 'bg-yellow-200 text-gray-700'; // เปลี่ยนเป็นสีตามความเสี่ยงปานกลาง
+                colorClass = 'bg-yellow-200 text-gray-700';
                 needAlert = true;
             }
-            // หาก elephant=false & alert=true (สามารถเก็บไว้ถ้าต้องการ)
-            // else if (!d.elephant && d.alert) {
-            //     message = `⚠️ Alert! แต่ไม่มีช้าง ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
-            //     colorClass = 'bg-yellow-200 text-gray-700';
-            //     needAlert = true;
-            // }
         }
 
         if (needAlert) {
@@ -892,33 +865,26 @@ $conn->close();
         }
     }
 
-    // fetchNewData (ดึงข้อมูลใหม่)
     function fetchNewData() {
-        fetch(`../elephant_api/get_detections.php?last_id=${lastDetectionID}`, {
-            credentials: 'same-origin' // ส่ง cookies ด้วยเพื่อการยืนยันตัวตน
-        })
+		fetch(`../elephant_api/get_detections.php?last_id=${lastDetectionID}`, {
+			credentials: 'same-origin'
+		})
         .then(res => {
             if (!res.ok) throw new Error("Network error: " + res.statusText);
             return res.json();
         })
         .then(dt => {
-            console.log("Data from API:", dt);
             if (dt && dt.status === 'success' && Array.isArray(dt.data)) {
                 let newIDfound = false;
                 dt.data.forEach(d => {
-                    // ตรวจสอบเฉพาะข้อมูลใหม่ที่มี ID มากกว่า lastDetectionID
                     if (d.id > lastDetectionID) {
-                        // เพิ่มข้อมูลลงตาราง
-                        if (d.lat_cam === null || d.long_cam === null || !Array.isArray(d.elephant_lat) || !Array.isArray(d.elephant_long)) {
+                        if (!d.lat_cam || !d.long_cam || !d.elephant_lat || !d.elephant_long) {
                             addMissingDetectionToTable(d);
                         } else {
                             addDetectionToTable(d);
                         }
-                        // แจ้งเตือน
                         handleNewDetection(d);
                         newIDfound = true;
-
-                        // อัปเดต lastDetectionID
                         if (d.id > lastDetectionID) {
                             lastDetectionID = d.id;
                         }
@@ -935,130 +901,41 @@ $conn->close();
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-
-        // ปิดแจ้งเตือน
         document.getElementById('closeHeaderAlert').addEventListener('click', hideHeaderAlert);
         document.getElementById('closePopup').addEventListener('click', hidePopup);
-        // ปิด modal
         document.getElementById('closeImageModal').addEventListener('click', closeImageModal);
 
-        // เช็ค Timeout ทุก 1 วินาที
+        // เช็ค Timeout ทุก 1 วิ
         setInterval(() => {
-            if (lastDetectionTime && (Date.now() - lastDetectionTime > 60000)) { // 1 นาที
+            if (lastDetectionTime && (Date.now() - lastDetectionTime > 60000)) {
                 hideHeaderAlert();
                 hidePopup();
-                lastDetectionTime = null; // รีเซ็ตหลังจากซ่อนการแจ้งเตือน
+                lastDetectionTime = null;
             }
         }, 1000);
         
-        // ดึงข้อมูลทุก 5 วินาที
+        // ดึงข้อมูลใหม่ทุก 5 วิ
         setInterval(fetchNewData, 5000);
 
-        // Event Delegation สำหรับการคลิกแถวและปุ่ม View Image
+        // Event delegation สำหรับ table-body
         document.getElementById('detection-table-body').addEventListener('click', function(event) {
-            // หา closest tr ที่มี class 'clickable-row'
             const row = event.target.closest('tr.clickable-row');
             if (row) {
-                // ตรวจสอบว่าไม่ได้คลิกที่ select, button, หรือ a
                 if (event.target.closest('select') || event.target.closest('button') || event.target.closest('a') || event.target.closest('form')) {
                     return;
                 }
-                
                 const id = row.getAttribute('data-id');
                 if (id) {
                     window.location.href = `solutions_admin.php?id=${encodeURIComponent(id)}`;
                 }
             }
-
             // ตรวจสอบปุ่ม View Image
             if (event.target && event.target.classList.contains('view-image-button')) {
                 const imagePath = event.target.getAttribute('data-image');
                 openImageModal(imagePath);
             }
         });
-
-        // จัดการกับการเปลี่ยนแปลงของ select ผ่าน AJAX
-        document.getElementById('detection-table-body').addEventListener('change', function(event) {
-            if (event.target && event.target.classList.contains('status-select')) {
-                const select = event.target;
-                const form = select.closest('.status-form');
-                const id = form.querySelector('input[name="id"]').value;
-                const status = select.value.toLowerCase(); // แปลงเป็นตัวพิมพ์เล็ก
-
-                // สร้างข้อมูลสำหรับส่ง
-                const params = new URLSearchParams();
-                params.append('update_status', '1');
-                params.append('id', id);
-                params.append('status', status);
-                // params.append('csrf_token', '<?php echo $csrf_token; ?>'); // ถ้าต้องการใช้ CSRF protection
-
-                // ส่งข้อมูลผ่าน AJAX
-                fetch('../admin_dashboard.php', { // ใช้ relative URL
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: params.toString(),
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        showPopup("อัปเดตสถานะสำเร็จ", 'bg-green-300 text-green-800');
-                    } else {
-                        showPopup("เกิดข้อผิดพลาดในการอัปเดตสถานะ: " + data.message, 'bg-red-600 text-white');
-                    }
-                })
-                .catch(error => {
-                    console.error("Error updating status:", error);
-                    showPopup("เกิดข้อผิดพลาดในการอัปเดตสถานะ", 'bg-red-600 text-white');
-                });
-            }
-        });
-
     });
-
-    // ปิด dropdown เมื่อคลิกนอก
-    window.onclick = function(event) {
-        if (!event.target.matches('.dropdown-button') && !event.target.closest('.dropdown-content')) {
-            var dropdowns = document.querySelectorAll(".dropdown-content");
-            dropdowns.forEach(dropdown => {
-                if (dropdown.classList.contains('show')) {
-                    dropdown.classList.remove('show');
-                }
-            });
-        }
-    }
-
-    // ฟังก์ชันเปิด/ปิด dropdown
-    function toggleDropdown(event) {
-        event.stopPropagation();
-        var dropdown = event.currentTarget.closest('.dropdown');
-        var dropdownContent = dropdown.querySelector('.dropdown-content');
-        dropdownContent.classList.toggle('show');
-
-        // Perform AJAX request to update the database
-        var xhr = new XMLHttpRequest();
-        xhr.open("POST", "update_db.php", true);
-        xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-        xhr.onreadystatechange = function () {
-            if (xhr.readyState === 4 && xhr.status === 200) {
-                try {
-                    const response = JSON.parse(xhr.responseText);
-                    if (response.status === 'success') {
-                        console.log("Database updated successfully");
-                        // Optionally, provide visual feedback to the user
-                    } else {
-                        console.error("Update failed:", response.message);
-                        // Optionally, notify the user of the failure
-                    }
-                } catch (e) {
-                    console.error("Invalid JSON response");
-                }
-            }
-        };
-        xhr.send("action=updateDropdownStatus");
-    }
-
 </script>
 
 <!-- Optional loading screen -->

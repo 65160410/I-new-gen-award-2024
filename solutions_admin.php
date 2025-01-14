@@ -339,6 +339,7 @@ $stmt_details->close();
 
 // Determine if detection is completed
 $isCompleted = ($detection['status'] === 'completed');
+$isPending = ($detection['status'] === 'pending');
 
 $conn->close();
 ?>
@@ -435,9 +436,9 @@ $conn->close();
                 </div>
             </form>
         <?php endif; ?>
-
+<div id="solutionDiv">
         <!-- Existing Solution Details -->
-        <h2 class="text-2xl font-semibold mb-4 text-gray-800">รายละเอียดการแก้ไขที่มีอยู่</h2>
+        <h2 class="text-2xl font-semibold mb-4 text-gray-800">บุคคลยืนยันตัวตน</h2>
         <?php if (count($solution_details) > 0): ?>
             <div class="overflow-x-auto">
                 <table class="min-w-full bg-white border border-gray-200">
@@ -470,7 +471,7 @@ $conn->close();
         <?php else: ?>
             <p class="text-gray-600">ไม่มีรายละเอียดการแก้ไขสำหรับการตรวจจับนี้.</p>
         <?php endif; ?>
-
+</div>
         <div class="flex justify-between mt-6">
             <a href="admin_dashboard.php" class="text-gray-600 hover:text-blue-600">← กลับไปที่ Dashboard</a>
         </div>
@@ -486,16 +487,19 @@ $conn->close();
 
     <!-- JavaScript -->
     <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            var isCompleted = <?php echo $isCompleted ? 'true' : 'false'; ?>;
-            
-            // ตรวจสอบสถานะว่าเป็น "ดำเนินการแล้ว" หรือไม่
-            if (isCompleted) {
-                document.getElementById('solutionForm').style.display = 'none'; // ซ่อนฟอร์ม
-            } else {
-                document.getElementById('solutionForm').style.display = 'block'; // แสดงฟอร์ม
-            }
-        });
+document.addEventListener("DOMContentLoaded", function() {
+    var isCompleted = <?php echo $detection['status'] === 'completed' ? 'true' : 'false'; ?>;
+    
+    // ตรวจสอบสถานะการดำเนินการ
+    if (isCompleted) {
+        document.getElementById('solutionDiv').style.display = 'block'; // แสดงรายละเอียดการแก้ไขที่มีอยู่
+        document.getElementById('solutionForm').style.display = 'none'; // ซ่อนฟอร์มเพิ่มรายละเอียด
+    } else {
+        document.getElementById('solutionDiv').style.display = 'none'; // ซ่อนรายละเอียดการแก้ไขที่มีอยู่
+        document.getElementById('solutionForm').style.display = 'block'; // แสดงฟอร์มเพิ่มรายละเอียด
+    }
+});
+
     </script>
 </body>
 </html>
