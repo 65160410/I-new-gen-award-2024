@@ -844,7 +844,7 @@ def main():
             cv2.imshow('Live Camera Feed', frame)
 
             current_time = time.time()
-            if current_time - last_processed_time >= 10:
+            if current_time - last_processed_time >= 30:
                 print("[INFO] Processing frame...")
                 process_frame(
                     camera,
