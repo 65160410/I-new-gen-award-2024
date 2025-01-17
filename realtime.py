@@ -38,7 +38,6 @@ Main Workflow:
 from ultralytics import YOLO
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 import torch
 import requests
 import base64
@@ -55,14 +54,14 @@ import tempfile
 def draw_perspective_lines(image, road_mask, standard_road_width_meters=3.5, distance_between_lines_meters=10, max_distance_meters=100):
     """
     Draws perspective lines on the road based on the road mask.
-    
+
     Parameters:
     - image: Original RGB image.
     - road_mask: Binary mask of the road.
     - standard_road_width_meters: Standard road width in meters.
     - distance_between_lines_meters: Distance between lines in meters.
     - max_distance_meters: Maximum distance to draw lines in meters.
-    
+
     Returns:
     - result_image: Image with perspective lines drawn.
     - y_positions: Y-coordinates of the drawn lines.
@@ -141,13 +140,33 @@ def draw_perspective_lines(image, road_mask, standard_road_width_meters=3.5, dis
         print(f"[ERROR in draw_perspective_lines]: {e}")
         return image, []
 
-def process_road_image(image_path, model_path, params):
+def load_model(model_path, conf_threshold=0.5):
+    """
+    Loads a YOLO model from the specified path.
+
+    Parameters:
+    - model_path: Path to the YOLO model.
+    - conf_threshold: Confidence threshold for detections.
+
+    Returns:
+    - model: Loaded YOLO model.
+    """
+    try:
+        print(f"[DEBUG] Loading YOLO model from {model_path}...")
+        model = YOLO(model_path)
+        print("[DEBUG] YOLO model loaded successfully.")
+        return model
+    except Exception as e:
+        print(f"[ERROR] Failed to load model {model_path}: {e}")
+        return None
+
+def process_road_image(image_path, road_model, params):
     """
     Processes the image to detect roads and draw perspective lines.
 
     Parameters:
     - image_path: Path to the image.
-    - model_path: Path to the road detection model.
+    - road_model: YOLO model for road detection.
     - params: Dictionary of parameters.
 
     Returns:
@@ -157,10 +176,7 @@ def process_road_image(image_path, model_path, params):
     - y_positions: Y-coordinates of the drawn lines.
     """
     try:
-        print("[DEBUG] Loading road detection model...")
-        road_model = YOLO(model_path)
-        print("[DEBUG] Road detection model loaded. Running inference...")
-
+        print("[DEBUG] Running road detection inference...")
         road_results = road_model(image_path, conf=params['confidence_road'])
         print("[DEBUG] Road detection inference completed.")
 
@@ -168,11 +184,7 @@ def process_road_image(image_path, model_path, params):
             road_result = road_results[0]
             class_names = road_model.names
 
-            road_class_id = None
-            for cls_id, cls_name in class_names.items():
-                if cls_name.lower() == 'road':
-                    road_class_id = cls_id
-                    break
+            road_class_id = get_class_id('road', class_names)
             print(f"[DEBUG] road_class_id: {road_class_id}")
 
             image = cv2.imread(image_path)
@@ -180,20 +192,8 @@ def process_road_image(image_path, model_path, params):
                 print(f"[ERROR] Image not found or cannot be loaded: {image_path}")
                 return False, None, None, []
 
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            road_mask = np.zeros((road_result.orig_shape[0], road_result.orig_shape[1]), dtype=np.uint8)
-
-            if road_class_id is not None and road_result.masks is not None:
-                for mask, cls in zip(road_result.masks.data, road_result.boxes.cls):
-                    if int(cls) == road_class_id:
-                        mask_image = mask.cpu().numpy().astype(np.uint8) * 255
-                        if mask_image.shape != road_mask.shape:
-                            mask_image = cv2.resize(
-                                mask_image,
-                                (road_mask.shape[1], road_mask.shape[0]),
-                                interpolation=cv2.INTER_NEAREST
-                            )
-                        road_mask = cv2.bitwise_or(road_mask, mask_image)
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            road_mask = create_road_mask(road_result, road_class_id, image_rgb.shape[:2])
 
             print(f"[DEBUG] road_mask sum: {np.sum(road_mask)}")
             if np.sum(road_mask) == 0:
@@ -202,7 +202,7 @@ def process_road_image(image_path, model_path, params):
             if np.sum(road_mask) > 0:
                 print("[DEBUG] road_mask found. Drawing perspective lines...")
                 result_image, y_positions = draw_perspective_lines(
-                    image,
+                    image_rgb,
                     road_mask,
                     params['standard_road_width_meters'],
                     distance_between_lines_meters=params['distance_between_lines_meters'],
@@ -211,21 +211,61 @@ def process_road_image(image_path, model_path, params):
                 return True, road_mask, result_image, y_positions
             else:
                 print("[DEBUG] 'road' section not found in the image.")
-                # When road is not found, return the original image without perspective lines
-                return False, None, image, []
+                return False, None, image_rgb, []
         else:
             print("[DEBUG] No road detection results.")
-            # When no road detection results, return the original image without perspective lines
             image = cv2.imread(image_path)
             if image is not None:
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                return False, None, image, []
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                return False, None, image_rgb, []
             else:
                 print(f"[ERROR] Image not found or cannot be loaded: {image_path}")
                 return False, None, None, []
     except Exception as e:
         print(f"[ERROR in process_road_image]: {e}")
         return False, None, None, []
+
+def get_class_id(target_class, class_names):
+    """
+    Retrieves the class ID for the specified target class.
+
+    Parameters:
+    - target_class: Name of the target class.
+    - class_names: Dictionary mapping class IDs to class names.
+
+    Returns:
+    - class_id: ID of the target class or None if not found.
+    """
+    for cls_id, cls_name in class_names.items():
+        if cls_name.lower() == target_class.lower():
+            return cls_id
+    return None
+
+def create_road_mask(road_result, road_class_id, image_shape):
+    """
+    Creates a binary mask for the road based on detection results.
+
+    Parameters:
+    - road_result: Detection result from YOLO.
+    - road_class_id: Class ID for the road.
+    - image_shape: Shape of the original image.
+
+    Returns:
+    - road_mask: Binary mask of the road.
+    """
+    road_mask = np.zeros(image_shape, dtype=np.uint8)
+    if road_class_id is not None and road_result.masks is not None:
+        for mask, cls in zip(road_result.masks.data, road_result.boxes.cls):
+            if int(cls) == road_class_id:
+                mask_image = mask.cpu().numpy().astype(np.uint8) * 255
+                if mask_image.shape != road_mask.shape:
+                    mask_image = cv2.resize(
+                        mask_image,
+                        (road_mask.shape[1], road_mask.shape[0]),
+                        interpolation=cv2.INTER_NEAREST
+                    )
+                road_mask = cv2.bitwise_or(road_mask, mask_image)
+    return road_mask
 
 def encode_image(image_path):
     """
@@ -235,7 +275,7 @@ def encode_image(image_path):
     - image_path: Path to the image.
 
     Returns:
-    - Base64 encoded string of the image.
+    - Base64 encoded string of the image or None if encoding fails.
     """
     try:
         with open(image_path, "rb") as img_file:
@@ -258,7 +298,7 @@ def send_to_server(url, data):
     - data: Data payload.
 
     Returns:
-    - Server response.
+    - Server response or None if request fails.
     """
     headers = {'Content-Type': 'application/json'}
     print("[DEBUG] Sending data to server...")
@@ -281,7 +321,7 @@ def calculate_destination_latlong(lat, lon, distance_m, bearing_degrees):
     - bearing_degrees: Bearing in degrees.
 
     Returns:
-    - New latitude and longitude.
+    - Tuple of new latitude and longitude or (None, None) if calculation fails.
     """
     try:
         R = 6378137.0  # Earth's radius in meters
@@ -342,7 +382,7 @@ def detect_objects(image_path, primary_model, class_names_primary, conf_threshol
         detected_objects = []
 
         # Detect with primary model
-        print("[DEBUG] Running detection with primary model (MoDelTrue.pt)...")
+        print("[DEBUG] Running detection with primary model...")
         primary_results = primary_model(image_path, conf=conf_threshold)
         for result in primary_results:
             if result.boxes is not None:
@@ -418,21 +458,7 @@ def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, ca
             for obj in objects_detected:
                 if obj['class_name'].lower() == 'elephant':
                     elephant_count += 1
-                    if y_positions:
-                        # Extract the bottom y-coordinate of the bounding box
-                        _, _, _, y2 = map(int, obj['box'])
-                        elephant_bottom_y = y2
-                        print(f"[DEBUG] Elephant bottom y-coordinate: {elephant_bottom_y}")
-
-                        # Calculate distance based on the closest perspective line
-                        diff = np.abs(np.array(y_positions) - elephant_bottom_y)
-                        closest_line_idx = np.argmin(diff)
-                        elephant_distance_m = float(params['distance_between_lines_meters'] * (int(closest_line_idx) + 1))
-                        print(f"[DEBUG] Elephant detected at y={elephant_bottom_y}, closest line index={closest_line_idx}, distance={elephant_distance_m} meters")
-                    else:
-                        elephant_distance_m = None
-                        print("[DEBUG] y_positions unavailable. Skipping distance calculation.")
-
+                    elephant_distance_m = calculate_elephant_distance(obj, y_positions, params)
                     if elephant_distance_m is not None:
                         lat, lon = calculate_destination_latlong(camera_lat, camera_long, elephant_distance_m, camera_bearing_degrees)
                         if lat is not None and lon is not None:
@@ -443,7 +469,6 @@ def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, ca
                         elephant_lats.append(None)
                         elephant_longs.append(None)
                         elephant_distances.append(None)
-
                 elif obj['class_name'].lower() == 'car':
                     car_count += 1
 
@@ -474,9 +499,64 @@ def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, ca
         print(f"[ERROR in create_test_payload]: {e}")
         return {}
 
+def calculate_elephant_distance(obj, y_positions, params):
+    """
+    Calculates the distance of an elephant based on its bounding box and perspective lines.
+
+    Parameters:
+    - obj: Detected elephant object.
+    - y_positions: Y-coordinates of perspective lines.
+    - params: Parameters dictionary.
+
+    Returns:
+    - Distance in meters or None if calculation fails.
+    """
+    try:
+        if y_positions:
+            # Extract the bottom y-coordinate of the bounding box
+            _, _, _, y2 = map(int, obj['box'])
+            print(f"[DEBUG] Elephant bottom y-coordinate: {y2}")
+
+            # Calculate distance based on the closest perspective line
+            diff = np.abs(np.array(y_positions) - y2)
+            closest_line_idx = np.argmin(diff)
+            elephant_distance_m = float(params['distance_between_lines_meters'] * (int(closest_line_idx) + 1))
+            print(f"[DEBUG] Elephant detected at y={y2}, closest line index={closest_line_idx}, distance={elephant_distance_m} meters")
+            return elephant_distance_m
+        else:
+            print("[DEBUG] y_positions unavailable. Skipping distance calculation.")
+            return None
+    except Exception as e:
+        print(f"[ERROR in calculate_elephant_distance]: {e}")
+        return None
+
+def create_road_detection_model(model_path):
+    """
+    Loads the road detection YOLO model.
+
+    Parameters:
+    - model_path: Path to the road detection model.
+
+    Returns:
+    - Loaded YOLO model or None if loading fails.
+    """
+    return load_model(model_path)
+
+def create_object_detection_model(model_path):
+    """
+    Loads the object detection YOLO model.
+
+    Parameters:
+    - model_path: Path to the object detection model.
+
+    Returns:
+    - Loaded YOLO model or None if loading fails.
+    """
+    return load_model(model_path)
+
 # --- [Main Processing Function] ---
 
-def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, SERVER_URL):
+def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, SERVER_URL, road_model):
     """
     Captures a frame from the camera, processes it, and sends API requests based on detections.
 
@@ -487,6 +567,7 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
     - object_model_1: Primary YOLO model.
     - class_names_primary: Class names from the primary model.
     - SERVER_URL: API endpoint URL.
+    - road_model: Road detection YOLO model.
     """
     ret, frame = camera.read()
     if not ret:
@@ -494,20 +575,20 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
         return
 
     # Save the captured frame to a temporary file
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_image:
-        temp_image_path = temp_image.name
-        cv2.imwrite(temp_image_path, frame)
-        print(f"[DEBUG] Captured image saved to {temp_image_path}")
+    temp_image_path = save_frame_to_temp(frame)
+    if not temp_image_path:
+        print("[ERROR] Failed to save captured frame.")
+        return
 
     try:
         # Process road image
         road_found, road_mask, processed_image, y_positions = process_road_image(
             temp_image_path,
-            CONFIG['road_model_path'],
+            road_model,
             PARAMS
         )
 
-        # Always perform object detection, regardless of road_found
+        # Perform object detection regardless of road_found
         objects_detected = detect_objects(
             temp_image_path,
             primary_model=object_model_1,
@@ -522,6 +603,7 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
             print(f"[DEBUG] Detected {len(objects_detected)} objects.")
 
         # Create payload
+        image_needed = any(obj['class_name'].lower() == 'elephant' for obj in objects_detected)
         data = create_test_payload(
             camera_id=CONFIG['camera_id'],
             camera_lat=CONFIG['camera_lat'],
@@ -530,7 +612,7 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
             camera_bearing_degrees=CONFIG['bearing_degrees'],
             y_positions=y_positions,
             params=PARAMS,
-            image_path=temp_image_path if any(obj['class_name'].lower() == 'elephant' for obj in objects_detected) else None
+            image_path=temp_image_path if image_needed else None
         )
 
         # Convert all data to native Python types to ensure JSON serialization
@@ -544,23 +626,94 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
 
         # Send data to server
         response = send_to_server(SERVER_URL, data)
-        if response:
-            if response.status_code == 200:
-                print("Data sent successfully:", response.text)
-            else:
-                print("Failed to send data. Status code:", response.status_code, "Response:", response.text)
-        else:
-            print("[DEBUG] No response from server.")
+        handle_server_response(response)
 
         # Store data in a .txt file 
+        log_data(data)
+    
+        # Overlay detection results on the frame for display
+        frame_display = overlay_detections(frame, processed_image, road_found, objects_detected)
+
+        # Display the frame
+        cv2.imshow('Live Camera Feed', frame_display)
+
+        # Introduce a 5-second delay while allowing window events
+        handle_display_delay()
+
+    except Exception as e:
+        print(f"[ERROR in processing frame]: {e}")
+    finally:
+        # Clean up temporary image file
+        if os.path.exists(temp_image_path):
+            os.remove(temp_image_path)
+            print(f"[DEBUG] Temporary image {temp_image_path} deleted.")
+
+def save_frame_to_temp(frame):
+    """
+    Saves the captured frame to a temporary file.
+
+    Parameters:
+    - frame: The captured frame.
+
+    Returns:
+    - Path to the temporary image file or None if saving fails.
+    """
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_image:
+            temp_image_path = temp_image.name
+            cv2.imwrite(temp_image_path, frame)
+            print(f"[DEBUG] Captured image saved to {temp_image_path}")
+            return temp_image_path
+    except Exception as e:
+        print(f"[ERROR in save_frame_to_temp]: {e}")
+        return None
+
+def handle_server_response(response):
+    """
+    Handles the server response after sending data.
+
+    Parameters:
+    - response: The server response object.
+    """
+    if response:
+        if response.status_code == 200:
+            print("Data sent successfully:", response.text)
+        else:
+            print("Failed to send data. Status code:", response.status_code, "Response:", response.text)
+    else:
+        print("[DEBUG] No response from server.")
+
+def log_data(data):
+    """
+    Logs the data payload to a text file with the image data truncated.
+
+    Parameters:
+    - data: The data payload dictionary.
+    """
+    try:
         data_copy = data.copy()
         if data_copy.get("image"):
             data_copy["image"] = data_copy["image"][:20] + "..."
         with open("data_log.txt", "a") as log_file:
             log_file.write(json.dumps(data_copy) + "\n")
         print("[DEBUG] Data stored in data_log.txt with base64 truncated")
+    except Exception as e:
+        print(f"[ERROR in log_data]: {e}")
 
-        # Overlay detection results on the frame for display
+def overlay_detections(original_frame, processed_image, road_found, objects_detected):
+    """
+    Overlays detection results on the original frame for display.
+
+    Parameters:
+    - original_frame: The original captured frame.
+    - processed_image: The image with perspective lines drawn.
+    - road_found: Boolean indicating if road is detected.
+    - objects_detected: List of detected objects.
+
+    Returns:
+    - frame_display: The frame with detections overlaid.
+    """
+    try:
         if road_found and objects_detected:
             # Read the processed image to overlay perspective lines
             processed_image_bgr = cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR)
@@ -569,39 +722,51 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
                 class_name = obj['class_name']
                 box = obj['box']
                 x1, y1, x2, y2 = map(int, box)
-                if class_name.lower() == 'elephant':
-                    color = (0, 0, 255)  # Red for elephants
-                elif class_name.lower() == 'car':
-                    color = (0, 255, 0)  # Green for cars
-                else:
-                    color = (255, 0, 0)  # Blue for unknown classes
+                color = get_detection_color(class_name)
                 cv2.rectangle(processed_image_bgr, (x1, y1), (x2, y2), color, 2)
                 cv2.putText(processed_image_bgr, class_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
             # Replace the current frame with the processed image
             frame_display = processed_image_bgr.copy()
         elif not road_found and objects_detected:
             # If road not found but objects detected, display original frame with bounding boxes
-            frame_display = frame.copy()
+            frame_display = original_frame.copy()
             for obj in objects_detected:
                 class_name = obj['class_name']
                 box = obj['box']
                 x1, y1, x2, y2 = map(int, box)
-                if class_name.lower() == 'elephant':
-                    color = (0, 0, 255)  # Red for elephants
-                elif class_name.lower() == 'car':
-                    color = (0, 255, 0)  # Green for cars
-                else:
-                    color = (255, 0, 0)  # Blue for unknown classes
+                color = get_detection_color(class_name)
                 cv2.rectangle(frame_display, (x1, y1), (x2, y2), color, 2)
                 cv2.putText(frame_display, class_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
         else:
             # If no road or objects detected, display the original frame
-            frame_display = frame.copy()
+            frame_display = original_frame.copy()
+        return frame_display
+    except Exception as e:
+        print(f"[ERROR in overlay_detections]: {e}")
+        return original_frame.copy()
 
-        # Display the frame
-        cv2.imshow('Live Camera Feed', frame_display)
+def get_detection_color(class_name):
+    """
+    Returns the color for bounding boxes based on the class name.
 
-        # Introduce a 5-second delay while allowing window events
+    Parameters:
+    - class_name: Name of the detected class.
+
+    Returns:
+    - color: Tuple representing the BGR color.
+    """
+    if class_name.lower() == 'elephant':
+        return (0, 0, 255)  # Red for elephants
+    elif class_name.lower() == 'car':
+        return (0, 255, 0)  # Green for cars
+    else:
+        return (255, 0, 0)  # Blue for unknown classes
+
+def handle_display_delay():
+    """
+    Introduces a 5-second delay while allowing window events.
+    """
+    try:
         start_time = time.time()
         while True:
             elapsed_time = time.time() - start_time
@@ -610,22 +775,11 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
             # Wait for 1 millisecond to process window events
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 print("\n[INFO] 'q' pressed. Exiting...")
-                camera.release()
-                cv2.destroyAllWindows()
                 exit()
-
     except Exception as e:
-        print(f"[ERROR in processing frame]: {e}")
-        frame_display = frame.copy()
-    finally:
-        # Clean up temporary image file
-        if os.path.exists(temp_image_path):
-            os.remove(temp_image_path)
-            print(f"[DEBUG] Temporary image {temp_image_path} deleted.")
+        print(f"[ERROR in handle_display_delay]: {e}")
 
-    # No additional cv2.imshow here as it's already handled above
-
-# --- [Initialization and Main Loop] ---
+# --- [Main Initialization and Loop] ---
 
 def main():
     """
@@ -661,10 +815,19 @@ def main():
 
         # Load YOLO models
         print("[DEBUG] Loading object detection models...")
-        object_model_1 = YOLO(CONFIG['object_model_path_1'])  # Primary model
+        object_model_1 = create_object_detection_model(CONFIG['object_model_path_1'])  # Primary model
+        if object_model_1 is None:
+            print("[ERROR] Failed to load object detection model.")
+            return
         print("[DEBUG] Object detection model loaded successfully.")
 
-        # Get class names from model
+        road_model = create_road_detection_model(CONFIG['road_model_path'])
+        if road_model is None:
+            print("[ERROR] Failed to load road detection model.")
+            return
+        print("[DEBUG] Road detection model loaded successfully.")
+
+        # Get class names from object detection model
         class_names_primary = object_model_1.names
 
         print("[DEBUG] Starting main loop. Press 'q' to exit.")
@@ -689,11 +852,12 @@ def main():
                     PARAMS,
                     object_model_1,
                     class_names_primary,
-                    SERVER_URL
+                    SERVER_URL,
+                    road_model
                 )
                 last_processed_time = time.time()  # Reset the timer after processing
 
-            # Check for 'q' key press to exit
+            # Check for 'q' or 'ๆ' key press to exit
             if cv2.waitKey(1) & 0xFF in [ord('q'), ord('ๆ')]:
                 print("\n[INFO] 'q' or 'ๆ' pressed. Exiting...")
                 break
