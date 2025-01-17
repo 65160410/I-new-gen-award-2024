@@ -27,12 +27,10 @@ if (!isset($conn) || !$conn instanceof mysqli) {
  */
 function getIntensityInfo($elephant, $alert, $distance) {
     $dist = floatval($distance);
-    if ($dist <= 1) {
+    if ($elephant && $alert) {
         return ['text' => 'ฉุกเฉิน', 'class' => 'bg-red-600 text-white'];
-    } elseif ($elephant && $alert) {
-        return ['text' => 'ความเสี่ยงสูง', 'class' => 'bg-red-300 text-red-800'];
     } elseif ($elephant && !$alert) {
-        return ['text' => 'ความเสี่ยงปานกลาง', 'class' => 'bg-yellow-200 text-gray-700'];
+        return ['text' => 'ความเสี่ยงสูง', 'class' => 'bg-yellow-200 text-gray-700'];
     } else {
         return ['text' => 'ปกติ', 'class' => 'bg-white text-black'];
     }
@@ -93,8 +91,8 @@ $sql_new_detections = "
         d.distance_ele,
         d.alert,
         d.status,
-        d.car,               -- ใช้ฟิลด์ car แทน car_count
-        d.elephant_count,    -- คงเดิม
+        d.car_count,              
+        d.elephant_count,   
         i.timestamp,
         i.image_path
     FROM detections d
@@ -131,7 +129,7 @@ while ($row = $result->fetch_assoc()) {
     }
 
     // ประมวลผลจำนวนรถ
-    $car = isset($row['car']) && is_numeric($row['car']) ? intval($row['car']) : 0;
+    $car_count = isset($row['car_count']) && is_numeric($row['car_count']) ? intval($row['car_count']) : 0;
 
     // ประมวลผลจำนวนช้าง
     $elephant_count = isset($row['elephant_count']) && is_numeric($row['elephant_count']) ? intval($row['elephant_count']) : 0;
@@ -139,8 +137,8 @@ while ($row = $result->fetch_assoc()) {
     // สร้างอาร์เรย์สำหรับสิ่งที่ตรวจจับ
     $detection_types = [];
 
-    if ($car > 0) {
-        $detection_types[] = "รถ " . $car . " คัน";
+    if ($car_count > 0) {
+        $detection_types[] = "รถ " . $car_count . " คัน";
     }
 
     if ($elephant_count > 0) {
@@ -196,7 +194,7 @@ while ($row = $result->fetch_assoc()) {
         'status'            => htmlspecialchars($status_th, ENT_QUOTES, 'UTF-8'), // แสดงสถานะเป็นภาษาไทยเท่านั้น
         'edit_link'         => $edit_link, // เพิ่มฟิลด์สำหรับลิงก์แก้ไข
         'image_path'        => $full_image_path,
-        'car'               => $car,                         // ใช้ฟิลด์ car
+        'car_count'               => $car_count,                         // ใช้ฟิลด์ car
         'elephant_count'    => $elephant_count,              // ใช้จากฐานข้อมูล
         'detection_display' => $detection_display,           // เพิ่มฟิลด์นี้
         'intensity_text'    => $intensityInfo['text'],

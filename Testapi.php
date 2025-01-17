@@ -1,4 +1,4 @@
-<?php
+<?php 
 // Testapi.php
 
 // เปิดแสดง Error (Debug) -- ปิดใน Production
@@ -39,10 +39,10 @@ if (!$conn) {
     "camera_lat": 14.22512,
     "camera_long": 101.40544,
     "elephant": true,
-    "elephant_lat": [[14.22800],[13.22800]],
-    "elephant_long": [[101.40500],[100.40500]],
-    "car" : 2,
-    "elephant_distance": 10,
+    "elephant_lat": [14.22800, 13.22800],
+    "elephant_long": [101.40500, 100.40500],
+    "elephant_distance": [10.0, 40.0],
+    "car_count" : 2,
     "elephant_count": 2,
     "image": null,
     "alert": false,
@@ -102,58 +102,68 @@ foreach ($required_fields as $field) {
 }
 
 // ตรวจสอบ optional fields และเพิ่มการตรวจสอบความถูกต้อง
-// elephant_lat และ elephant_long เป็นลิสต์
-if (isset($data['elephant_lat']) && isset($data['elephant_long'])) {
-    if (!is_array($data['elephant_lat']) || !is_array($data['elephant_long'])) {
-        $errors['elephant_lat'] = "elephant_lat and elephant_long must be arrays";
+// elephant_lat และ elephant_long เป็นลิสต์ของตัวเลข
+if (isset($data['elephant_lat']) && isset($data['elephant_long']) && isset($data['elephant_distance'])) {
+    if (!is_array($data['elephant_lat']) || !is_array($data['elephant_long']) || !is_array($data['elephant_distance'])) {
+        $errors['elephant_lat'] = "elephant_lat, elephant_long และ elephant_distance ต้องเป็นอาร์เรย์";
     } else {
-        // ตรวจสอบว่าขนาดของทั้งสองอาร์เรย์เท่ากัน
-        if (count($data['elephant_lat']) !== count($data['elephant_long'])) {
-            $errors['elephant_lat'] = "elephant_lat and elephant_long must have the same number of elements";
+        // ตรวจสอบว่าขนาดของทั้งสามอาร์เรย์เท่ากัน
+        $count_lat = count($data['elephant_lat']);
+        $count_long = count($data['elephant_long']);
+        $count_distance = count($data['elephant_distance']);
+        if ($count_lat !== $count_long || $count_lat !== $count_distance) {
+            $errors['elephant_lat'] = "elephant_lat, elephant_long และ elephant_distance ต้องมีจำนวนองค์ประกอบเท่ากัน";
         } else {
-            // ตรวจสอบแต่ละค่าในอาร์เรย์
-            foreach ($data['elephant_lat'] as $index => $lat_arr) {
-                if (!is_array($lat_arr) || count($lat_arr) != 1 || !is_numeric($lat_arr[0])) {
-                    $errors["elephant_lat[$index]"] = "Each elephant_lat must be an array with one numeric value";
+            // ตรวจสอบว่าแต่ละองค์ประกอบเป็นตัวเลข
+            foreach ($data['elephant_lat'] as $index => $lat) {
+                if (!is_numeric($lat)) {
+                    $errors["elephant_lat[$index]"] = "elephant_lat[$index] ต้องเป็นตัวเลข";
                 }
             }
-            foreach ($data['elephant_long'] as $index => $long_arr) {
-                if (!is_array($long_arr) || count($long_arr) != 1 || !is_numeric($long_arr[0])) {
-                    $errors["elephant_long[$index]"] = "Each elephant_long must be an array with one numeric value";
+            foreach ($data['elephant_long'] as $index => $long) {
+                if (!is_numeric($long)) {
+                    $errors["elephant_long[$index]"] = "elephant_long[$index] ต้องเป็นตัวเลข";
                 } else {
                     // ตรวจสอบช่วงของ Longitude
-                    $lon = floatval($long_arr[0]);
+                    $lon = floatval($long);
                     if ($lon < -180 || $lon > 180) {
-                        $errors["elephant_long[$index]"] = "elephant_long must be between -180 and 180";
+                        $errors["elephant_long[$index]"] = "elephant_long[$index] ต้องอยู่ระหว่าง -180 ถึง 180";
                     }
+                }
+            }
+            foreach ($data['elephant_distance'] as $index => $distance) {
+                if (!is_numeric($distance)) {
+                    $errors["elephant_distance[$index]"] = "elephant_distance[$index] ต้องเป็นตัวเลข";
+                } elseif (floatval($distance) < 0) {
+                    $errors["elephant_distance[$index]"] = "elephant_distance[$index] ต้องไม่เป็นค่าลบ";
                 }
             }
         }
     }
 } else {
-    // ถ้าไม่มีทั้งสองฟิลด์ ให้ตรวจสอบว่าถูกต้องหรือไม่
-    if (isset($data['elephant_lat']) || isset($data['elephant_long'])) {
-        $errors['elephant_lat'] = "Both elephant_lat and elephant_long should be provided together";
+    // ถ้าไม่มีทั้งสามฟิลด์ ให้ตรวจสอบว่าถูกต้องหรือไม่
+    if (isset($data['elephant_lat']) || isset($data['elephant_long']) || isset($data['elephant_distance'])) {
+        $errors['elephant_lat'] = "ต้องให้ทั้ง elephant_lat, elephant_long และ elephant_distance พร้อมกัน";
     }
 }
 
-// เพิ่มการตรวจสอบอื่นๆ ถ้ามี เช่น elephant_distance, elephant_count, car
-$optional_fields = ['car','elephant_distance','elephant_count','alert','image'];
+// เพิ่มการตรวจสอบอื่นๆ ถ้ามี เช่น elephant_count, car_count, alert, image
+$optional_fields = ['car_count','elephant_distance','elephant_count','alert','image'];
 foreach ($optional_fields as $field) {
     if (isset($data[$field])) {
         switch($field) {
-            case 'car':
+            case 'car_count':
             case 'elephant_count':
                 if (!is_numeric($data[$field])) {
                     $errors[$field] = "Must be numeric";
+                } else {
+                    if (intval($data[$field]) < 0) {
+                        $errors[$field] = "Must be non-negative";
+                    }
                 }
                 break;
             case 'elephant_distance':
-                if (!is_numeric($data[$field])) {
-                    $errors[$field] = "Must be numeric";
-                } elseif (floatval($data[$field]) < 0) {
-                    $errors[$field] = "Must be non-negative";
-                }
+                // ได้ทำการตรวจสอบไปแล้วในขั้นตอนก่อนหน้า
                 break;
             case 'alert':
                 // รองรับ boolean หรือ 'true'/'false'/'1'/'0'
@@ -202,12 +212,12 @@ if (isset($data['elephant'])) {
 // รับค่าช้าง (lat/long/distance) ถ้าไม่มีให้เป็น null
 $elephant_lat      = isset($data['elephant_lat']) ? $data['elephant_lat'] : null;
 $elephant_long     = isset($data['elephant_long']) ? $data['elephant_long'] : null;
-$elephant_distance = isset($data['elephant_distance']) ? floatval($data['elephant_distance']) : null;
+$elephant_distance = isset($data['elephant_distance']) ? $data['elephant_distance'] : null;
 
 // รับค่ารถ
 $car_val = 0;
-if (isset($data['car']) && is_numeric($data['car'])) {
-    $car_val = intval($data['car']);
+if (isset($data['car_count']) && is_numeric($data['car_count'])) {
+    $car_val = intval($data['car_count']);
 }
 
 // elephant_count
@@ -228,37 +238,7 @@ if (isset($data['alert'])) {
 // image (base64 หรือ null)
 $image_data = array_key_exists('image', $data) ? $data['image'] : null;
 
-// 5) จัดเก็บ elephant_lat และ elephant_long เป็น DOUBLE
-$elephant_lat_val = null;
-$elephant_long_val = null;
-
-if (!is_null($elephant_lat) && is_array($elephant_lat)) {
-    // สมมุติว่าเก็บแค่ค่าของช้างตัวแรก
-    if (isset($elephant_lat[0][0]) && is_numeric($elephant_lat[0][0])) {
-        $elephant_lat_val = floatval($elephant_lat[0][0]);
-    }
-}
-
-if (!is_null($elephant_long) && is_array($elephant_long)) {
-    if (isset($elephant_long[0][0]) && is_numeric($elephant_long[0][0])) {
-        $elephant_long_val = floatval($elephant_long[0][0]);
-    }
-}
-
-// ตรวจสอบว่า elephant_lat_val และ elephant_long_val มีค่า
-if (!is_null($elephant_lat_val) && !is_null($elephant_long_val)) {
-    // คุณสามารถเพิ่มการตรวจสอบเพิ่มเติมได้
-} else {
-    // ถ้าไม่มีค่า
-    http_response_code(400);
-    echo json_encode([
-        "status" => "error",
-        "message" => "Invalid elephant_lat or elephant_long data"
-    ]);
-    exit;
-}
-
-// 6) สร้างโฟลเดอร์ uploads (ถ้ายังไม่มี)
+// 5) สร้างโฟลเดอร์ uploads (ถ้ายังไม่มี)
 $upload_dir = "uploads";
 if (!is_dir($upload_dir)) {
     // ควรกำหนด permission ตามเหมาะสม เช่น 0755
@@ -272,7 +252,7 @@ if (!is_dir($upload_dir)) {
     }
 }
 
-// 7) บันทึกข้อมูลรูปภาพลงตาราง images (image_path = NULL ถ้าไม่มีรูป)
+// 6) บันทึกข้อมูลรูปภาพลงตาราง images (image_path = NULL ถ้าไม่มีรูป)
 $image_path_to_save = null;
 if (!is_null($image_data)) {
     // ถือว่าเป็น base64 -> ลองถอดรหัสและบันทึกเป็นไฟล์
@@ -299,7 +279,7 @@ if (!is_null($image_data)) {
     $image_path_to_save = $filename;
 }
 
-// 8) บันทึกข้อมูลลงตาราง images ด้วย Prepared Statement
+// 7) บันทึกข้อมูลลงตาราง images ด้วย Prepared Statement
 $stmt_img = $conn->prepare("
     INSERT INTO images (timestamp, image_path, cam_id)
     VALUES (?, ?, ?)
@@ -324,14 +304,15 @@ if (!$stmt_img->execute()) {
 $image_id = $stmt_img->insert_id;
 $stmt_img->close();
 
-// 9) บันทึกข้อมูลลงตาราง detections ด้วย Prepared Statement
+// 8) บันทึกข้อมูลลงตาราง detections สำหรับแต่ละช้าง ด้วย Prepared Statement
 $sql_det = "
   INSERT INTO detections
-    (image_id, id_cam, lat_cam, long_cam, elephant, lat_ele, long_ele, distance_ele, `time`, alert, car, elephant_count)
+    (image_id, id_cam, lat_cam, long_cam, elephant, lat_ele, long_ele, distance_ele, `time`, alert, car_count, elephant_count)
   VALUES
     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ";
 
+// เตรียม Prepared Statement สำหรับ detections
 $stmt_det = $conn->prepare($sql_det);
 if (!$stmt_det) {
     http_response_code(500);
@@ -354,40 +335,60 @@ if (!$stmt_det) {
  * distance_ele    = double      (d)
  * time            = string      (s)
  * alert           = tinyint     (i)
- * car             = int         (i)
+ * car_count       = int         (i)
  * elephant_count  = int         (i)
  */
 
-// สายอักขระประเภทควรเป็น "isddidddsiii"
-$stmt_det->bind_param(
-    "isddidddsiii", // 12 ตัวอักษร
-    $image_id,             // i
-    $camera_id,            // s
-    $camera_lat,           // d
-    $camera_long,          // d
-    $elephant_val,         // i
-    $elephant_lat_val,     // d
-    $elephant_long_val,    // d
-    $elephant_distance,    // d
-    $timestamp,            // s
-    $alert_val,            // i
-    $car_val,              // i
-    $elephant_count_val    // i
-);
+// วนลูปผ่านแต่ละช้างและบันทึกข้อมูล
+for ($i = 0; $i < $elephant_count_val; $i++) {
+    // ตรวจสอบว่าข้อมูลมีอยู่ในอาร์เรย์
+    if (!isset($elephant_lat[$i], $elephant_long[$i], $elephant_distance[$i])) {
+        continue; // ข้ามหากข้อมูลไม่ครบ
+    }
 
-if (!$stmt_det->execute()) {
-    http_response_code(500);
-    echo json_encode([
-        "status"=>"error",
-        "message"=>"Insert detections failed: ".$stmt_det->error
-    ]);
-    exit;
+    $lat_ele = floatval($elephant_lat[$i]);
+    $long_ele = floatval($elephant_long[$i]);
+    $distance_ele = floatval($elephant_distance[$i]);
+
+    // ตรวจสอบช่วงของพิกัด
+    if ($lat_ele < -90 || $lat_ele > 90) {
+        // ข้ามหรือจัดการข้อผิดพลาดตามต้องการ
+        continue;
+    }
+    if ($long_ele < -180 || $long_ele > 180) {
+        // ข้ามหรือจัดการข้อผิดพลาดตามต้องการ
+        continue;
+    }
+
+    // ผูกพารามิเตอร์และ execute
+    $stmt_det->bind_param(
+        "isddidddsiii", // 12 ตัวอักษร
+        $image_id,             // i
+        $camera_id,            // s
+        $camera_lat,           // d
+        $camera_long,          // d
+        $elephant_val,         // i
+        $lat_ele,              // d
+        $long_ele,             // d
+        $distance_ele,         // d
+        $timestamp,            // s
+        $alert_val,            // i
+        $car_val,              // i
+        $elephant_count_val    // i
+    );
+
+    if (!$stmt_det->execute()) {
+        // คุณสามารถบันทึกข้อผิดพลาดแต่ละรายการได้ตามต้องการ
+        // ตัวอย่างเช่น บันทึกลง debug_log หรือส่งข้อความผิดพลาดเฉพาะเจาะจง
+        // ที่นี่เราจะข้ามการ execute ครั้งนี้และดำเนินการกับช้างตัวถัดไป
+        continue;
+    }
 }
-$stmt_det->close();
 
+$stmt_det->close();
 $conn->close();
 
-// 10) ส่งผลลัพธ์
+// 9) ส่งผลลัพธ์
 echo json_encode([
     "status"  => "success",
     "message" => "Data stored successfully.",
