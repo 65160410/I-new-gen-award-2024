@@ -37,8 +37,8 @@ def draw_perspective_lines(image, road_mask, standard_road_width_meters=3.5, dis
             print("[DEBUG] No road pixels found.")
             return image, []
 
-        top_y = np.min(road_pixels[0])
-        bottom_y = np.max(road_pixels[0])
+        top_y = int(np.min(road_pixels[0]))
+        bottom_y = int(np.max(road_pixels[0]))
         road_height_pixels = bottom_y - top_y
 
         print(f"[DEBUG] top_y: {top_y}, bottom_y: {bottom_y}, road_height_pixels: {road_height_pixels}")
@@ -79,8 +79,8 @@ def draw_perspective_lines(image, road_mask, standard_road_width_meters=3.5, dis
                 continue
             row_pixels = np.where(road_mask[y, :] > 0)[0]
             if len(row_pixels) > 0:
-                left_x = row_pixels[0]
-                right_x = row_pixels[-1]
+                left_x = int(row_pixels[0])
+                right_x = int(row_pixels[-1])
                 relative_distance = distance / max_distance_meters
                 thickness = max(1, int(3 * (1 - relative_distance)))
                 cv2.line(result_image, (left_x, y), (right_x, y), (255, 255, 255), thickness)
@@ -265,6 +265,29 @@ def calculate_destination_latlong(lat, lon, distance_m, bearing_degrees):
         print(f"[ERROR in calculate_destination_latlong]: {e}")
         return None, None
 
+def convert_to_native_types(obj):
+    """
+    Recursively converts NumPy data types in a structure to native Python types.
+
+    Parameters:
+    - obj: The input data structure.
+
+    Returns:
+    - The converted data structure with native Python types.
+    """
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, list):
+        return [convert_to_native_types(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {key: convert_to_native_types(value) for key, value in obj.items()}
+    else:
+        return obj
+
 def detect_objects(image_path, primary_model, class_names_primary, conf_threshold=0.5):
     """
     Detects objects (elephants and cars) using the primary YOLO model.
@@ -294,7 +317,7 @@ def detect_objects(image_path, primary_model, class_names_primary, conf_threshol
                         confidence = float(conf) if conf is not None else 0.0
                         detected_objects.append({
                             "class_name": class_name,
-                            "box": box.cpu().numpy().tolist(),
+                            "box": [float(coord) for coord in box.cpu().numpy()],
                             "confidence": confidence
                         })
                         print(f"[DEBUG] Detected {class_name} with box {box.cpu().numpy()} and confidence {confidence} using primary model.")
@@ -367,7 +390,7 @@ def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, ca
                         # Calculate distance based on the closest perspective line
                         diff = np.abs(np.array(y_positions) - elephant_bottom_y)
                         closest_line_idx = np.argmin(diff)
-                        elephant_distance_m = params['distance_between_lines_meters'] * (closest_line_idx + 1)
+                        elephant_distance_m = float(params['distance_between_lines_meters'] * (int(closest_line_idx) + 1))
                         print(f"[DEBUG] Elephant detected at y={elephant_bottom_y}, closest line index={closest_line_idx}, distance={elephant_distance_m} meters")
                     else:
                         elephant_distance_m = None
@@ -376,12 +399,12 @@ def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, ca
                     if elephant_distance_m is not None:
                         lat, lon = calculate_destination_latlong(camera_lat, camera_long, elephant_distance_m, camera_bearing_degrees)
                         if lat is not None and lon is not None:
-                            elephant_lats.append([lat])
-                            elephant_longs.append([lon])
-                            elephant_distances.append(elephant_distance_m)
+                            elephant_lats.append(float(lat))
+                            elephant_longs.append(float(lon))
+                            elephant_distances.append(float(elephant_distance_m))
                     else:
-                        elephant_lats.append([None])
-                        elephant_longs.append([None])
+                        elephant_lats.append(None)
+                        elephant_longs.append(None)
                         elephant_distances.append(None)
 
                 elif obj['class_name'].lower() == 'car':
@@ -401,10 +424,10 @@ def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, ca
             "elephant_lat": elephant_lats if elephant_count > 0 else [],
             "elephant_long": elephant_longs if elephant_count > 0 else [],
             "elephant_distance": elephant_distances if elephant_count > 0 else [],
-            "car_count": car_count,
-            "elephant_count": elephant_count,
+            "car_count": int(car_count),
+            "elephant_count": int(elephant_count),
             "image": image_data,
-            "alert": alert,
+            "alert": bool(alert),
             "timestamp": timestamp
         }
 
@@ -472,6 +495,9 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
             params=PARAMS,
             image_path=temp_image_path if any(obj['class_name'].lower() == 'elephant' for obj in objects_detected) else None
         )
+
+        # Convert all data to native Python types to ensure JSON serialization
+        data = convert_to_native_types(data)
 
         # Debug: Print payload (limit image data)
         data_to_print = data.copy()
