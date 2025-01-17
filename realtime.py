@@ -507,6 +507,7 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
 
         # Send data to server
         response = send_to_server(SERVER_URL, data)
+
         if response:
             if response.status_code == 200:
                 print("Data sent successfully:", response.text)
@@ -514,6 +515,14 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
                 print("Failed to send data. Status code:", response.status_code, "Response:", response.text)
         else:
             print("[DEBUG] No response from server.")
+
+        # Store data in a .txt file 
+        data_copy = data.copy()
+        if data_copy.get("image"):
+            data_copy["image"] = data_copy["image"][:20] + "..."
+        with open("data_log.txt", "a") as log_file:
+            log_file.write(json.dumps(data_copy) + "\n")
+        print("[DEBUG] Data stored in data_log.txt with base64 truncated")
 
         # Overlay detection results on the frame for display
         if road_found and objects_detected:
