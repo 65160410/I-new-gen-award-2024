@@ -649,8 +649,8 @@ def main():
                 last_processed_time = time.time()  # Reset the timer after processing
 
             # Check for 'q' key press to exit
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                print("\n[INFO] 'q' pressed. Exiting...")
+            if cv2.waitKey(1) & 0xFF in [ord('q'), ord('ๆ')]:
+                print("\n[INFO] 'q' or 'ๆ' pressed. Exiting...")
                 break
 
     except KeyboardInterrupt:
