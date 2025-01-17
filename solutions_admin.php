@@ -83,12 +83,10 @@ function getAddressFromCoords($lat, $lng) {
 
 // Function to determine Intensity Level and CSS class
 function getIntensityInfo($elephant, $alert, $distance) {
-    if (floatval($distance) <= 1) {
+    if ($elephant && $alert) {
         return ['text' => 'ฉุกเฉิน', 'class' => 'bg-red-600 text-white'];
-    } elseif ($elephant && $alert) {
-        return ['text' => 'ความเสี่ยงสูง', 'class' => 'bg-red-300 text-red-800'];
-    } elseif ($elephant && !$alert) { // Adjust condition as needed
-        return ['text' => 'ความเสี่ยงปานกลาง', 'class' => 'bg-yellow-200 text-gray-700'];
+    } elseif ($elephant && !$alert) {
+        return ['text' => 'ความเสี่ยงสูง', 'class' => 'bg-orange-500 text-white'];
     } else {
         return ['text' => 'ปกติ', 'class' => 'bg-white text-black'];
     }
@@ -204,7 +202,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $responsible_person = isset($_POST['responsible_person']) ? trim($_POST['responsible_person']) : '';
     $damage_occurred = isset($_POST['damage_occurred']) ? trim($_POST['damage_occurred']) : '';
     $action_date = isset($_POST['action_date']) ? $_POST['action_date'] : '';
-    $solution_status = isset($_POST['solution_status']) ? strtolower(trim($_POST['solution_status'])) : ''; // แปลงเป็นตัวพิมพ์เล็ก
+    $solution_status = isset($_POST['solution_status']) ? strtolower(trim($_POST['solution_status'])) : ''; 
+	
+	
+	$fatalities = isset($_POST['fatalities']) ? intval($_POST['fatalities']) : 0;
+	$injuries = isset($_POST['injuries']) ? intval($_POST['injuries']) : 0;
 
     // Validate inputs
     $errors = [];
@@ -222,6 +224,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($solution_status)) {
         $errors[] = "กรุณาเลือกสถานะการแก้ไข.";
     }
+	
 
     // Validate solution_status value
     $allowed_statuses = ['pending', 'completed'];
@@ -331,6 +334,11 @@ $stmt_details = $conn->prepare($sql_details);
 if (!$stmt_details) {
     die("Prepare failed: " . $conn->error);
 }
+
+
+$sql = "INSERT INTO incident_details (incident_id, fatalities, injuries) 
+        VALUES (?,?,?);";
+
 $stmt_details->bind_param("i", $detection_id);
 $stmt_details->execute();
 $result_details = $stmt_details->get_result();
@@ -362,7 +370,7 @@ $conn->close();
     <!-- Navbar -->
     <nav class="bg-white shadow">
         <div class="container mx-auto px-6 py-4 flex justify-between items-center">
-            <a href="admin_dashboard.php" class="text-xl font-bold text-blue-600">Admin Dashboard</a>
+            <a href="admin_dashboard.php" class="text-xl font-bold text-blue-600">อุทยานแห่งชาติเขาใหญ่</a>
             <a href="admin_logout.php" class="text-gray-600 hover:text-red-600">ออกจากระบบ</a>
         </div>
     </nav>
@@ -373,7 +381,7 @@ $conn->close();
             <h2 class="text-2xl font-semibold mb-4 text-gray-800">Detection Information</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <p><strong>เวลาดำเนินการ:</strong> <?= isset($detection['time']) ? safe_htmlspecialchars($detection['time']) : 'N/A' ?></p>
-                <p><strong>ตำแหน่งกล้อง:</strong> <?= safe_htmlspecialchars($detection['camera_address']) ?></p>
+              
                 <p><strong>สิ่งที่ตรวจจับ:</strong> <?= ($detection['lat_ele'] !== null && $detection['long_ele'] !== null) ? safe_htmlspecialchars($detection['lat_ele']) . ", " . safe_htmlspecialchars($detection['long_ele']) : '<span class="text-red-600">Elephant missing</span>' ?></p>
                 <p><strong>ระดับความรุนแรง:</strong> <span class="<?= safe_htmlspecialchars($detection['intensity_class']) ?> px-2 py-1 rounded"><?= safe_htmlspecialchars($detection['intensity_text']) ?></span></p>
                 <p><strong>สถานะการดำเนินการ:</strong> <?= safe_htmlspecialchars(translateStatus($detection['status'])) ?></p>
@@ -414,9 +422,17 @@ $conn->close();
                         <label class="block text-gray-700 mb-2">ผู้รับผิดชอบ:</label>
                         <input type="text" name="responsible_person" class="w-full border border-gray-300 p-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-500" value="<?= isset($_POST['responsible_person']) ? safe_htmlspecialchars($_POST['responsible_person']) : '' ?>" required placeholder="ระบุชื่อผู้รับผิดชอบ">
                     </div>
+					<div>
+						<label class="block text-gray-700 mb-2">จำนวนผู้เสียชีวิต:</label>
+						<input type="number" name="fatalities" class="w-full border border-gray-300 p-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-500" value="<?= isset($_POST['fatalities']) ? safe_htmlspecialchars($_POST['fatalities']) : 0 ?>" min="0" required placeholder="ระบุจำนวนผู้เสียชีวิต">
+					</div>
+					<div>
+						<label class="block text-gray-700 mb-2">จำนวนผู้บาดเจ็บ:</label>
+						<input type="number" name="injuries" class="w-full border border-gray-300 p-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-500" value="<?= isset($_POST['injuries']) ? safe_htmlspecialchars($_POST['injuries']) : 0 ?>" min="0" required placeholder="ระบุจำนวนผู้บาดเจ็บ">
+					</div>
                     <div class="md:col-span-2">
                         <label class="block text-gray-700 mb-2">ความเสียหายที่เกิดขึ้น:</label>
-                        <textarea name="damage_occurred" class="w-full border border-gray-300 p-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-500" rows="3"  placeholder="อธิบายความเสียหายที่เกิดขึ้น (ถ้ามี)"><?= isset($_POST['damage_occurred']) ? safe_htmlspecialchars($_POST['damage_occurred']) : '' ?></textarea>
+                        <textarea name="damage_occurred" class="w-full border border-gray-300 p-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-500" rows="3" required placeholder="อธิบายความเสียหายที่เกิดขึ้น (ถ้ามี)"><?= isset($_POST['damage_occurred']) ? safe_htmlspecialchars($_POST['damage_occurred']) : '' ?></textarea>
                     </div>
                     <div>
                         <label class="block text-gray-700 mb-2">วันที่ดำเนินการ:</label>
@@ -500,6 +516,34 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 });
 
+document.getElementById('solutionForm').addEventListener('submit', function(e) {
+    const requiredFields = ['solution_method', 'responsible_person', 'action_date', 'solution_status'];
+    let isValid = true;
+    
+    requiredFields.forEach(field => {
+        const element = this.elements[field];
+        if (!element.value.trim()) {
+            isValid = false;
+            element.classList.add('border-red-500');
+        } else {
+            element.classList.remove('border-red-500');
+        }
+    });
+    
+    if (!isValid) {
+        e.preventDefault();
+        alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+    }
+});
+
+// Add loading indicator
+function showLoading() {
+    document.querySelector('.fixed').classList.remove('hidden');
+}
+
+function hideLoading() {
+    document.querySelector('.fixed').classList.add('hidden');
+}
     </script>
 </body>
 </html>

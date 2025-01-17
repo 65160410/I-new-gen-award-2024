@@ -109,17 +109,16 @@ function getAddressFromCoords($lat, $lng) {
 }
 
 // ฟังก์ชันแปลง Intensity Level และกำหนดคลาสสี
-function getIntensityInfo($elephant, $alert, $distance) {
-    if (floatval($distance) <= 1) {
+function getIntensityInfo($elephant, $alert) {
+    if ($elephant && $alert) {
         return ['text' => 'ฉุกเฉิน', 'class' => 'bg-red-600 text-white'];
-    } elseif ($elephant && $alert) {
-        return ['text' => 'ความเสี่ยงสูง', 'class' => 'bg-red-300 text-red-800'];
     } elseif ($elephant && !$alert) {
-        return ['text' => 'ความเสี่ยงปานกลาง', 'class' => 'bg-yellow-200 text-gray-700'];
+        return ['text' => 'ความเสี่ยงสูง', 'class' => 'bg-orange-500 text-white'];
     } else {
         return ['text' => 'ปกติ', 'class' => 'bg-white text-black'];
     }
 }
+
 
 // Generate CSRF token if not already set
 if (empty($_SESSION['csrf_token'])) {
@@ -160,7 +159,7 @@ $sql_detections = "
         detections.distance_ele,
         detections.alert,
         detections.status,
-		detections.car,
+		detections.car_count,
 		detections.elephant_count,
         images.timestamp,
         images.image_path
@@ -250,7 +249,7 @@ if ($result_detections && $result_detections->num_rows > 0) {
             }
         }
 		    // ประมวลผลจำนวนรถ
-		$car = isset($row['car']) && is_numeric($row['car']) ? intval($row['car']) : 0;
+		$car_count = isset($row['car_count']) && is_numeric($row['car_count']) ? intval($row['car_count']) : 0;
 
 		// ประมวลผลจำนวนช้าง
 		$elephant_count = isset($row['elephant_count']) && is_numeric($row['elephant_count']) ? intval($row['elephant_count']) : 0;
@@ -258,8 +257,8 @@ if ($result_detections && $result_detections->num_rows > 0) {
 		// สร้างอาร์เรย์สำหรับสิ่งที่ตรวจจับ
 		$detection_types = [];
 
-		if ($car > 0) {
-			$detection_types[] = "รถ ". $car . " คัน";
+		if ($car_count > 0) {
+			$detection_types[] = "รถ ". $car_count . " คัน";
 		}
 
 		if ($elephant_count > 0) {
@@ -287,7 +286,7 @@ if ($result_detections && $result_detections->num_rows > 0) {
                 'elephant'       => filter_var($row['elephant'], FILTER_VALIDATE_BOOLEAN),
                 'status'         => $row['status'],
                 'camera_address' => $camera_address,
-				'car'      => $car,
+				'car_count'      => $car_count,
                 'intensity_text' => $intensityInfo['text'],
                 'intensity_class'=> $intensityInfo['class'],
                 'elephant_count' => $elephant_count,
@@ -307,7 +306,7 @@ if ($result_detections && $result_detections->num_rows > 0) {
                 'alert'          => filter_var($row['alert'], FILTER_VALIDATE_BOOLEAN),
                 'status'         => $row['status'],
                 'camera_address' => $camera_address,
-				'car'      => $car,
+				'car_count'      => $car_count,
                 'intensity_text' => $intensityInfo['text'],
                 'intensity_class'=> $intensityInfo['class'],
                 'elephant_count' => $elephant_count,
@@ -465,12 +464,6 @@ $conn->close();
                 <li><a href="ChartDashboard.php" class="flex items-center p-2 rounded hover:bg-gray-100 transition-colors">
                     <i class="fas fa-chart-line mr-3 text-gray-600"></i> Dashboard สรุปเหตุการณ์
                 </a></li>
-                <li><a href="manage_images.php" class="flex items-center p-2 rounded hover:bg-gray-100 transition-colors">
-                    <i class="fas fa-images mr-3 text-gray-600"></i> จัดการรูปภาพ
-                </a></li>
-                <li><a href="test_map.php" class="flex items-center p-2 rounded hover:bg-gray-100 transition-colors">
-                    <i class="fas fa-map-marked-alt mr-3 text-gray-600"></i> แผนที่
-                </a></li>
                 <li><a href="admin_logout.php" class="flex items-center p-2 rounded hover:bg-gray-100 transition-colors">
                     <i class="fas fa-sign-out-alt mr-3 text-gray-600"></i> ออกจากระบบ
                 </a></li>
@@ -483,7 +476,7 @@ $conn->close();
         <div class="container mx-auto py-6 px-4">
             <!-- Header -->
             <header class="flex justify-between items-center mb-6">
-                <h1 class="text-4xl font-bold">Admin Dashboard</h1>
+                <h1 class="text-4xl font-bold">อุทยานแห่งชาติเขาใหญ่</h1>
                 <button id="sidebarToggle" class="md:hidden text-gray-700 focus:outline-none">
                     <i class="fas fa-bars fa-2x"></i>
                 </button>
@@ -552,7 +545,7 @@ $conn->close();
                                             <?php endif; ?>
                                         </td>
                                         <td class="border px-4 py-2">
-                                            <a href="chang_v3.php?type=cam&id=<?= safe_htmlspecialchars($marker['id']) ?>&lat=<?= safe_htmlspecialchars($marker['lat_cam']) ?>&lng=<?= safe_htmlspecialchars($marker['long_cam']) ?>" class="text-blue-500 hover:underline">Map</a>
+                                            <a href="chang_v4.php?type=cam&id=<?= safe_htmlspecialchars($marker['id']) ?>&lat=<?= safe_htmlspecialchars($marker['lat_cam']) ?>&lng=<?= safe_htmlspecialchars($marker['long_cam']) ?>" class="text-blue-500 hover:underline">Map</a>
                                         </td>
                                         <td class="border px-4 py-2">
                                             <?php
@@ -661,32 +654,28 @@ $conn->close();
             .replace(/'/g,"&#039;");
     }
 
-    // ฟังก์ชันแปลง Intensity Level
-    function getIntensityLevel(elephant, alert, distance) {
-        if (distance <= 1) {
-            return 'ฉุกเฉิน';
-        } else if (elephant && alert) {
-            return 'ความเสี่ยงสูง';
-        } else if (elephant && !alert) {
-            return 'ความเสี่ยงปานกลาง';
-        } else {
-            return 'ปกติ';
-        }
-    }
+	// ฟังก์ชันแปลง Intensity Level
+	function getIntensityLevel(elephant, alert, distance) {
+		if (elephant && alert) {
+			return 'ฉุกเฉิน';
+		} else if (elephant && !alert) {
+			return 'ความเสี่ยงสูง';
+		} else {
+			return 'ปกติ';
+		}
+	}
 
-    // ฟังก์ชันแปลง Intensity Level เป็นคลาสสี
-    function getIntensityClass(intensityLevel) {
-        switch(intensityLevel) {
-            case 'ฉุกเฉิน':
-                return 'bg-red-600 text-white';
-            case 'ความเสี่ยงสูง':
-                return 'bg-red-300 text-red-800';
-            case 'ความเสี่ยงปานกลาง':
-                return 'bg-yellow-200 text-gray-700';
-            default:
-                return 'bg-white text-black';
-        }
-    }
+	// ฟังก์ชันแปลง Intensity Level เป็นคลาสสี
+	function getIntensityClass(intensityLevel) {
+		switch(intensityLevel) {
+			case 'ฉุกเฉิน':
+				return 'bg-red-600 text-white';
+			case 'ความเสี่ยงสูง':
+				return 'bg-orange-500 text-white';
+			default:
+				return 'bg-white text-black';
+		}
+	}
 
     // Modal (image)
     function openImageModal(path) {
@@ -835,35 +824,30 @@ $conn->close();
         }, 60000); // 1 นาที
     }
 
-    function handleNewDetection(d) {
-        let message = '';
-        let colorClass = '';
-        let needAlert = false;
+function handleNewDetection(d) {
+    let message = '';
+    let colorClass = '';
+    let needAlert = false;
 
-        if (d.distance_ele <= 1) {
-            message = `⚠️ ฉุกเฉิน! ช้างเข้าใกล้มาก! ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
-            colorClass = 'bg-red-600 text-white';
+    if (d.elephant && d.alert) {
+        message = `⚠️ ความเสี่ยงฉุกเฉิน! รถและช้างอยู่ในพื้นที่เดียวกัน! ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
+        colorClass = 'bg-red-600 text-white';
+        needAlert = true;
+    }
+    else {
+        if (d.elephant && !d.alert) {
+            message = `⚠️ ความเสี่ยงสูง! ช้างอยู่บนถนน! ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
+            colorClass = 'bg-orange-500 text-white';
             needAlert = true;
         }
-        else {
-            if (d.elephant && d.alert) {
-                message = `⚠️ เจอช้างและรถ! ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
-                colorClass = 'bg-red-300 text-red-800';
-                needAlert = true;
-            }
-            else if (d.elephant && !d.alert) {
-                message = `⚠️ พบช้าง! (ไม่มี Alert รถ) ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
-                colorClass = 'bg-yellow-200 text-gray-700';
-                needAlert = true;
-            }
-        }
-
-        if (needAlert) {
-            showPopup(message, colorClass);
-            showHeaderAlert("แจ้งเตือน: " + message, colorClass);
-            lastDetectionTime = Date.now();
-        }
     }
+
+    if (needAlert) {
+        showPopup(message, colorClass);
+        showHeaderAlert("แจ้งเตือน: " + message, colorClass);
+        lastDetectionTime = Date.now();
+    }
+}
 
     function fetchNewData() {
 		fetch(`../elephant_api/get_detections.php?last_id=${lastDetectionID}`, {

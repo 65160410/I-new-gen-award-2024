@@ -6,6 +6,7 @@ error_reporting(E_ALL);
 
 session_start();
 
+// ตรวจสอบการเข้าสู่ระบบแอดมิน
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
     header("Location: admin_login.php");
     exit;
@@ -18,7 +19,9 @@ if (!$conn) {
     die("Connection failed: " . mysqli_connect_error());
 }
 
-// ฟังก์ชันช่วยเหลือสำหรับสร้างคำสั่ง GROUP BY ตามช่วงเวลา
+/* 
+ * ฟังก์ชันสำหรับจัดกลุ่มข้อมูลตามช่วงเวลา
+ */
 function getGroupByClause($groupBy, $timeField) {
     switch ($groupBy) {
         case 'day':
@@ -30,35 +33,25 @@ function getGroupByClause($groupBy, $timeField) {
         case 'year':
             return "YEAR($timeField)";
         case 'all':
-            return "1"; // สำหรับกราฟที่ไม่ต้องการจัดกลุ่ม
+            return "1";
         default:
             return "DATE($timeField)";
     }
 }
 
-// ฟังก์ชันสำหรับดึงข้อมูลตามประเภทกราฟและช่วงเวลา พร้อมจำกัดจำนวนข้อมูล
+/**
+ * ฟังก์ชันสำหรับดึงข้อมูลจากตาราง detections
+ */
 function getChartData($conn, $chartType, $groupBy) {
     try {
-        // กำหนดจำนวนข้อมูลที่ต้องการแสดงตามช่วงเวลา
-        switch ($groupBy) {
-            case 'day':
-                $limit = 7;
-                break;
-            case 'week':
-                $limit = 4;
-                break;
-            case 'month':
-                $limit = 12;
-                break;
-            case 'year':
-                $limit = 5; // คุณสามารถปรับเปลี่ยนได้ตามต้องการ
-                break;
-            case 'all':
-                $limit = 0; // ไม่มีการจำกัด
-                break;
-            default:
-                $limit = 7;
-        }
+        $limit = match ($groupBy) {
+            'day' => 7,
+            'week' => 4,
+            'month' => 12,
+            'year' => 5,
+            'all' => 0,
+            default => 7,
+        };
 
         switch ($chartType) {
             case 'risk_level':
@@ -75,10 +68,8 @@ function getChartData($conn, $chartType, $groupBy) {
                     ORDER BY 
                         $groupByClause DESC
                 ";
-                if ($limit > 0) {
-                    $query .= " LIMIT $limit";
-                }
                 break;
+
             case 'elephant_count':
                 $groupByClause = getGroupByClause($groupBy, 'time');
                 $query = "
@@ -92,10 +83,8 @@ function getChartData($conn, $chartType, $groupBy) {
                     ORDER BY 
                         $groupByClause DESC
                 ";
-                if ($limit > 0) {
-                    $query .= " LIMIT $limit";
-                }
                 break;
+
             case 'camera_locations':
                 $groupByClause = getGroupByClause($groupBy, 'time');
                 $query = "
@@ -112,12 +101,9 @@ function getChartData($conn, $chartType, $groupBy) {
                         camera_location, 
                         $groupByClause DESC
                 ";
-                if ($limit > 0) {
-                    $query .= " LIMIT $limit";
-                }
                 break;
+
             case 'summary_events':
-                // ดึงข้อมูลสรุปเหตุการณ์ทั้งหมดและเหตุการณ์ที่แก้ไข
                 $query = "
                     SELECT 
                         COUNT(*) AS total_events,
@@ -125,8 +111,8 @@ function getChartData($conn, $chartType, $groupBy) {
                     FROM detections
                 ";
                 break;
+
             case 'resolved_percentage_per_level':
-                // ดึงข้อมูลเปอร์เซ็นต์การแก้ไขตามระดับเหตุการณ์
                 $query = "
                     SELECT 
                         alert AS risk_level,
@@ -136,8 +122,8 @@ function getChartData($conn, $chartType, $groupBy) {
                     GROUP BY alert
                 ";
                 break;
+
             case 'top_areas':
-                // ดึงข้อมูลลำดับบริเวณที่เกิดเหตุสูงสุด 10 อันดับ
                 $query = "
                     SELECT 
                         camera_location AS area,
@@ -148,33 +134,33 @@ function getChartData($conn, $chartType, $groupBy) {
                     LIMIT 10
                 ";
                 break;
+
             default:
                 return [];
         }
 
-        if (in_array($chartType, ['summary_events', 'resolved_percentage_per_level'])) {
-            $result = mysqli_query($conn, $query);
-            if (!$result) {
-                throw new Exception("Error in query: " . mysqli_error($conn));
+        if ($stmt = mysqli_prepare($conn, $query)) {
+            if (isset($limit) && $limit > 0) {
+                $query .= " LIMIT ?";
+                mysqli_stmt_bind_param($stmt, "i", $limit);
             }
 
-            $data = mysqli_fetch_assoc($result);
-            mysqli_free_result($result);
+            mysqli_stmt_execute($stmt);
+            $result = mysqli_stmt_get_result($stmt);
         } else {
-            $result = mysqli_query($conn, $query);
-            if (!$result) {
-                throw new Exception("Error in query: " . mysqli_error($conn));
-            }
-
-            $data = [];
-            while ($row = mysqli_fetch_assoc($result)) {
-                $data[] = $row;
-            }
-
-            // กลับข้อมูลเป็นลำดับจากเก่าไปใหม่
-            $data = array_reverse($data);
+            throw new Exception("Error in query preparation: " . mysqli_error($conn));
         }
 
+        $data = [];
+        while ($row = mysqli_fetch_assoc($result)) {
+            $data[] = $row;
+        }
+
+        if (in_array($chartType, ['summary_events', 'resolved_percentage_per_level'])) {
+            return $data[0] ?? [];
+        }
+
+        mysqli_free_result($result);
         return $data;
 
     } catch (Exception $e) {
@@ -183,755 +169,462 @@ function getChartData($conn, $chartType, $groupBy) {
     }
 }
 
-// ตรวจสอบว่ามีการร้องขอข้อมูลผ่าน AJAX หรือไม่
+// ตรวจสอบการเรียกผ่าน AJAX
 if (isset($_GET['action']) && $_GET['action'] === 'fetch_data') {
     $chartType = $_GET['chart'] ?? '';
     $groupBy = $_GET['group_by'] ?? 'day';
+
+    $chartType = mysqli_real_escape_string($conn, $chartType);
+    $groupBy = mysqli_real_escape_string($conn, $groupBy);
 
     $data = getChartData($conn, $chartType, $groupBy);
     echo json_encode($data);
     exit;
 }
+
+// ดึงข้อมูลสถิติต่างๆ
+$elephantsOnRoadCount = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) AS count FROM detections WHERE elephant = '1' AND car_count = '0'"))['count'] ?? 0;
+$elephantsCarCount = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) AS count FROM detections WHERE elephant = '1' AND car_count = '1'"))['count'] ?? 0;
+$statusCountcompleted = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) AS count FROM detections WHERE status = 'completed'"))['count'] ?? 0;
+$statusCountpending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) AS count FROM detections WHERE status = 'pending'"))['count'] ?? 0;
+
+// ดึงข้อมูลการตรวจจับในแต่ละเดือน
+$sql = "SELECT 
+          DATE_FORMAT(time, '%Y-%m') AS month,
+          SUM(elephant) AS elephant_count,
+          SUM(elephant AND alert) AS elephant_car_count
+        FROM detections
+        GROUP BY DATE_FORMAT(time, '%Y-%m')
+        ORDER BY DATE_FORMAT(time, '%Y-%m')";
+$result = $conn->query($sql);
+
+$data = [];
+if ($result->num_rows > 0) {
+    while($row = $result->fetch_assoc()) {
+        $data[] = $row;
+    }
+}
+
+// ส่งข้อมูลไปยัง JavaScript ในรูปแบบ JSON
+$jsonData = json_encode($data);
+echo "<script>var chartData = $jsonData;</script>";
+
+// ดึงข้อมูลตำแหน่งติดตั้งกล้อง
+$installPoints = [];
+$sql = "SELECT lat_cam, long_cam, id_cam FROM detections"; 
+$result = mysqli_query($conn, $sql);
+while ($row = mysqli_fetch_assoc($result)) {
+    $installPoints[] = $row;
+}
+
+mysqli_close($conn);
 ?>
 <!DOCTYPE html>
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <title>กราฟความเสี่ยงและจำนวนช้าง</title>
+    <title>Dashboard สรุปเหตุการณ์และความเสี่ยง</title>
+    <!-- Tailwind CSS -->
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <style>
-        .sidebar {
-            width: 16rem;
-        }
-        @media (max-width: 768px) {
-            .sidebar {
-                transform: translateX(-100%);
-            }
-            .sidebar.open {
-                transform: translateX(0);
-            }
-        }
-        .chart-container {
-            position: relative;
+        /* กำหนดความสูงของแผนที่ให้ยืดหยุ่น */
+        #map {
+            height: 100%;
             width: 100%;
-            background-color: white;
-            padding: 1rem;
-            border-radius: 0.5rem;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            height: 400px;
-            min-height: 300px;
-            overflow: hidden;
         }
-        canvas {
-            width: 100% !important;
-            height: 100% !important;
-        }
-        .group-by-select {
-            float: right;
-            margin-bottom: 1rem;
+        /* กำหนดความสูงคงที่ให้กับ Container ของกราฟ */
+        .chart-container {
+            height: 16rem; /* 64 * 0.25rem = 16rem */
         }
     </style>
 </head>
-<body class="flex h-screen bg-gray-100">
-    <!-- Slide Bar -->
-    <div class="sidebar bg-white border-r border-gray-200 fixed inset-y-0 left-0 transform -translate-x-full md:translate-x-0 transition-transform duration-200 ease-in-out z-50">
-        <div class="p-6">
-            <h2 class="text-2xl font-semibold mb-6 text-gray-700">Admin Menu</h2>
-            <ul class="space-y-4">
-                <li><a href="admin_dashboard.php" class="flex items-center p-2 rounded hover:bg-gray-100 transition-colors">
-                    <i class="fas fa-tachometer-alt mr-3 text-gray-600"></i> Dashboard หลัก
-                </a></li>
-                <li><a href="ChartDashboard.php" class="flex items-center p-2 rounded hover:bg-gray-100 transition-colors">
-                    <i class="fas fa-chart-line mr-3 text-gray-600"></i> Dashboard สรุปเหตุการณ์
-                </a></li>
-                <li><a href="manage_images.php" class="flex items-center p-2 rounded hover:bg-gray-100 transition-colors">
-                    <i class="fas fa-images mr-3 text-gray-600"></i> จัดการรูปภาพ
-                </a></li>
-                <li><a href="test_map.php" class="flex items-center p-2 rounded hover:bg-gray-100 transition-colors">
-                    <i class="fas fa-map-marked-alt mr-3 text-gray-600"></i> แผนที่
-                </a></li>
-                <li><a href="admin_logout.php" class="flex items-center p-2 rounded hover:bg-gray-100 transition-colors">
-                    <i class="fas fa-sign-out-alt mr-3 text-gray-600"></i> ออกจากระบบ
-                </a></li>
-            </ul>
+<body class="flex h-screen bg-gray-100 overflow-hidden">
+    <!-- Sidebar -->
+    <div class="sidebar fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-gray-200 transform -translate-x-full transition-transform duration-200 ease-in-out md:translate-x-0">
+        <div class="flex flex-col h-full">
+            <div class="p-6">
+                <h2 class="text-2xl font-semibold text-gray-700">Admin Menu</h2>
+                <ul class="mt-6 space-y-4">
+                    <li>
+                        <a href="admin_dashboard.php" class="flex items-center p-2 text-gray-700 rounded hover:bg-gray-100">
+                            <i class="fas fa-tachometer-alt mr-3"></i> Dashboard หลัก
+                        </a>
+                    </li>
+                    <li>
+                        <a href="ChartDashboard.php" class="flex items-center p-2 text-gray-700 rounded bg-gray-100">
+                            <i class="fas fa-chart-line mr-3"></i> Dashboard สรุปเหตุการณ์
+                        </a>
+                    </li>
+                    <li>
+                        <a href="admin_logout.php" class="flex items-center p-2 text-gray-700 rounded hover:bg-gray-100">
+                            <i class="fas fa-sign-out-alt mr-3"></i> ออกจากระบบ
+                        </a>
+                    </li>
+                </ul>
+            </div>
+            <!-- เพิ่มพื้นที่ว่างเพื่อเลื่อนเมนูขึ้นด้านบน -->
+            <div class="flex-grow"></div>
         </div>
     </div>
 
-    <!-- Mobile menu button -->
-    <div class="md:hidden flex items-center p-2 bg-white border-b border-gray-200 fixed top-0 left-0 right-0 z-40">
+    <!-- Mobile Menu Toggle -->
+    <div class="flex items-center justify-between p-4 bg-white border-b border-gray-200 md:hidden fixed top-0 left-0 right-0 z-40">
         <button id="menu-btn" class="text-gray-600 focus:outline-none">
             <i class="fas fa-bars fa-lg"></i>
         </button>
-        <h2 class="ml-4 text-2xl font-semibold text-gray-700">กราฟความเสี่ยงและจำนวนช้าง</h2>
+        <h2 class="text-xl font-semibold text-gray-700">Dashboard สรุปเหตุการณ์</h2>
     </div>
 
-    <!-- Main content -->
-    <div class="flex-1 ml-0 md:ml-64 p-6 mt-16 md:mt-0 overflow-auto">
-        <h1 class="text-3xl font-bold mb-6">กราฟความเสี่ยงและจำนวนช้าง</h1>
+    <!-- Main Content -->
+    <div class="flex-1 flex flex-col ml-0 md:ml-64">
+        <div class="flex-1 p-6 pt-20 md:pt-4 overflow-auto">
+            <header class="mb-6">
+                <h1 class="text-3xl font-bold text-gray-800">อุทยานแห่งชาติเขาใหญ่</h1>
+                <p class="text-xl font-semibold text-gray-600">Dashboard สรุปเหตุการณ์และความเสี่ยง</p>
+            </header>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <!-- Existing Charts -->
-            <!-- Risk Level Chart -->
-            <div class="chart-container relative">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-semibold">ระดับความเสี่ยงที่เจอช้างกับรถในเฟรมเดียวกัน</h2>
-                    <div class="flex space-x-2">
-                        <select class="group-by-select border rounded p-1" id="riskLevelGroupBy">
-                            <option value="day">วัน</option>
-                            <option value="week">สัปดาห์</option>
-                            <option value="month">เดือน</option>
-                            <option value="year">ปี</option>
-                        </select>
-                        <button class="expand-btn text-gray-600 hover:text-gray-800 focus:outline-none" data-modal="riskLevelModal">
-                            <i class="fas fa-expand"></i>
-                        </button>
-                    </div>
-                </div>
-                <canvas id="riskLevelChart"></canvas>
-            </div>
-
-            <!-- Elephant Detection Chart -->
-            <div class="chart-container relative">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-semibold">จำนวนช้างที่ถูกตรวจจับ</h2>
-                    <div class="flex space-x-2">
-                        <select class="group-by-select border rounded p-1" id="elephantCountGroupBy">
-                            <option value="day">วัน</option>
-                            <option value="week">สัปดาห์</option>
-                            <option value="month">เดือน</option>
-                            <option value="year">ปี</option>
-                        </select>
-                        <button class="expand-btn text-gray-600 hover:text-gray-800 focus:outline-none" data-modal="elephantCountModal">
-                            <i class="fas fa-expand"></i>
-                        </button>
-                    </div>
-                </div>
-                <canvas id="elephantCountChart"></canvas>
-            </div>
-
-            <!-- Camera Locations Chart -->
-            <div class="chart-container relative">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-semibold">สถานที่ติดตั้งกล้องแต่ละจุด</h2>
-                    <div class="flex space-x-2">
-                        <select class="group-by-select border rounded p-1" id="cameraLocationsGroupBy">
-                            <option value="day">วัน</option>
-                            <option value="week">สัปดาห์</option>
-                            <option value="month">เดือน</option>
-                            <option value="year">ปี</option>
-                        </select>
-                        <button class="expand-btn text-gray-600 hover:text-gray-800 focus:outline-none" data-modal="cameraLocationsModal">
-                            <i class="fas fa-expand"></i>
-                        </button>
-                    </div>
-                </div>
-                <canvas id="cameraLocationsChart"></canvas>
-            </div>
-
-            <!-- สรุปกราฟจำนวนเหตุการณ์ทั้งหมดและจำนวนเหตุการณ์ที่แก้ไข พร้อมเปอร์เซ็นต์ -->
-            <div class="chart-container relative">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-semibold">สรุปจำนวนเหตุการณ์และการแก้ไข</h2>
-                    <button class="expand-btn text-gray-600 hover:text-gray-800 focus:outline-none" data-modal="summaryEventsModal">
-                        <i class="fas fa-expand"></i>
-                    </button>
-                </div>
-                <canvas id="summaryEventsChart"></canvas>
-            </div>
-
-            <!-- กราฟจำนวนและเปอร์เซ็นต์ความเสี่ยงแต่ละระดับ -->
-            <div class="chart-container relative">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-semibold">จำนวนและเปอร์เซ็นต์ความเสี่ยงแต่ละระดับ</h2>
-                    <button class="expand-btn text-gray-600 hover:text-gray-800 focus:outline-none" data-modal="riskLevelPercentageModal">
-                        <i class="fas fa-expand"></i>
-                    </button>
-                </div>
-                <canvas id="riskLevelPercentageChart"></canvas>
-            </div>
-
-            <!-- กราฟลำดับบริเวณที่เกิดเหตุสูงสุด 10 อันดับ พร้อมเปอร์เซ็นต์ -->
-            <div class="chart-container relative">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-semibold">ลำดับบริเวณที่เกิดเหตุสูงสุด 10 อันดับ</h2>
-                    <button class="expand-btn text-gray-600 hover:text-gray-800 focus:outline-none" data-modal="topAreasModal">
-                        <i class="fas fa-expand"></i>
-                    </button>
-                </div>
-                <canvas id="topAreasChart"></canvas>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal Template -->
-    <div id="modalTemplate" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
-        <div class="bg-white rounded-lg overflow-hidden w-11/12 md:w-4/5 lg:w-3/5 xl:w-2/3 relative">
-            <button class="close-modal absolute top-2 right-2 text-gray-600 hover:text-gray-800 focus:outline-none">
-                <i class="fas fa-times fa-lg"></i>
-            </button>
-            <div class="p-4">
-                <canvas class="expanded-chart"></canvas>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // ฟังก์ชันสำหรับดึงข้อมูลจากเซิร์ฟเวอร์
-            function fetchData(chartType, groupBy, callback) {
-                let url = `ChartDashboard.php?action=fetch_data&chart=${chartType}`;
-                if (groupBy && groupBy !== 'all') {
-                    url += `&group_by=${groupBy}`;
-                }
-                fetch(url)
-                    .then(response => {
-                        if (!response.ok) {
-                            throw new Error(`HTTP error! status: ${response.status}`);
-                        }
-                        return response.json();
-                    })
-                    .then(data => callback(data))
-                    .catch(error => console.error('Error fetching data:', error));
-            }
-
-            // ฟังก์ชันสำหรับแสดง Modal
-            function showModal(chartId, title, renderFunction) {
-                const modal = document.getElementById('modalTemplate').cloneNode(true);
-                modal.id = '';
-                modal.classList.remove('hidden');
-
-                const expandedCanvas = modal.querySelector('.expanded-chart');
-                const closeModalBtn = modal.querySelector('.close-modal');
-
-                closeModalBtn.addEventListener('click', () => {
-                    modal.classList.add('hidden');
-                    modal.remove();
-                });
-
-                modal.addEventListener('click', (e) => {
-                    if (e.target === modal) {
-                        modal.classList.add('hidden');
-                        modal.remove();
-                    }
-                });
-
-                document.body.appendChild(modal);
-
-                // Render the chart inside the modal
-                renderFunction(expandedCanvas);
-
-                // Set title if needed (optional)
-                // You can modify the modal template to include a title if desired
-            }
-
-            // 1. Summary Events Chart
-            const summaryEventsCtx = document.getElementById('summaryEventsChart').getContext('2d');
-            let summaryEventsChart;
-
-            function renderSummaryEventsChart(canvas = summaryEventsCtx) {
-                fetchData('summary_events', 'all', function(data) {
-                    const totalEvents = parseInt(data.total_events);
-                    const resolvedEvents = parseInt(data.resolved_events);
-                    const resolvedPercentage = totalEvents > 0 ? ((resolvedEvents / totalEvents) * 100).toFixed(2) : 0;
-
-                    if (canvas.chartInstance) {
-                        canvas.chartInstance.destroy();
-                    }
-
-                    canvas.chartInstance = new Chart(canvas, {
-                        type: 'doughnut',
-                        data: {
-                            labels: ['เหตุการณ์ทั้งหมด', 'เหตุการณ์ที่แก้ไขแล้ว'],
-                            datasets: [{
-                                data: [totalEvents, resolvedEvents],
-                                backgroundColor: ['rgba(54, 162, 235, 0.6)', 'rgba(75, 192, 192, 0.6)'],
-                                borderColor: ['rgba(54, 162, 235, 1)', 'rgba(75, 192, 192, 1)'],
-                                borderWidth: 1
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            plugins: {
-                                legend: {
-                                    position: 'bottom',
-                                },
-                                tooltip: {
-                                    callbacks: {
-                                        label: function(context) {
-                                            let label = context.label || '';
-                                            if (label) {
-                                                label += ': ';
-                                            }
-                                            if (context.parsed !== null) {
-                                                label += context.parsed;
-                                                if (context.label === 'เหตุการณ์ที่แก้ไขแล้ว') {
-                                                    label += ` (${resolvedPercentage}%)`;
-                                                }
-                                            }
-                                            return label;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
-                });
-            }
-
-            // 2. Risk Level Chart
-            const riskLevelCtx = document.getElementById('riskLevelChart').getContext('2d');
-            let riskLevelChart;
-
-            function renderRiskLevelChart(groupBy, canvas = riskLevelCtx) {
-                fetchData('risk_level', groupBy, function(data) {
-                    const labels = [];
-                    const hasRisk = [];
-                    const noRisk = [];
-
-                    data.forEach(item => {
-                        const period = item.period;
-                        const alert = item.alert;
-                        const count = parseInt(item.count);
-
-                        if (!labels.includes(period)) {
-                            labels.push(period);
-                            hasRisk.push(0);
-                            noRisk.push(0);
-                        }
-
-                        const index = labels.indexOf(period);
-                        if (alert == 1) {
-                            hasRisk[index] += count;
-                        } else {
-                            noRisk[index] += count;
-                        }
-                    });
-
-                    // เพื่อให้กราฟแสดงข้อมูลจากเก่าไปใหม่
-                    labels.reverse();
-                    hasRisk.reverse();
-                    noRisk.reverse();
-
-                    if (canvas.chartInstance) {
-                        canvas.chartInstance.destroy();
-                    }
-
-                    canvas.chartInstance = new Chart(canvas, {
-                        type: 'bar',
-                        data: {
-                            labels: labels,
-                            datasets: [
-                                {
-                                    label: 'มีความเสี่ยง',
-                                    data: hasRisk,
-                                    backgroundColor: 'rgba(255, 192, 203, 0.6)', // สีชมพู
-                                    borderColor: 'rgba(255, 192, 203, 1)',
-                                    borderWidth: 1
-                                },
-                                {
-                                    label: 'ไม่มีความเสี่ยง',
-                                    data: noRisk,
-                                    backgroundColor: 'rgba(54, 162, 235, 0.6)', // สีฟ้า
-                                    borderColor: 'rgba(54, 162, 235, 1)',
-                                    borderWidth: 1
-                                }
-                            ]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            scales: {
-                                x: {
-                                    stacked: false // แสดงกราฟสองแท่งด้านข้างกัน
-                                },
-                                y: {
-                                    beginAtZero: true,
-                                    ticks: {
-                                        stepSize: 1
-                                    }
-                                }
-                            },
-                            plugins: {
-                                legend: {
-                                    position: 'bottom',
-                                }
-                            }
-                        }
-                    });
-                });
-            }
-
-            // 3. Elephant Count Chart
-            const elephantCountCtx = document.getElementById('elephantCountChart').getContext('2d');
-            let elephantCountChart;
-
-            function renderElephantCountChart(groupBy, canvas = elephantCountCtx) {
-                fetchData('elephant_count', groupBy, function(data) {
-                    const labels = data.map(item => item.period);
-                    const counts = data.map(item => parseInt(item.count));
-
-                    // เพื่อให้กราฟแสดงข้อมูลจากเก่าไปใหม่
-                    labels.reverse();
-                    counts.reverse();
-
-                    if (canvas.chartInstance) {
-                        canvas.chartInstance.destroy();
-                    }
-
-                    canvas.chartInstance = new Chart(canvas, {
-                        type: 'line',
-                        data: {
-                            labels: labels,
-                            datasets: [{
-                                label: 'จำนวนช้าง',
-                                data: counts,
-                                backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                                borderColor: 'rgba(54, 162, 235, 1)',
-                                borderWidth: 1,
-                                fill: true,
-                                tension: 0.4
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            scales: {
-                                y: {
-                                    beginAtZero: true,
-                                    ticks: {
-                                        stepSize: 1
-                                    }
-                                }
-                            },
-                            plugins: {
-                                legend: {
-                                    position: 'bottom',
-                                }
-                            }
-                        }
-                    });
-                });
-            }
-
-            // 4. Camera Locations Chart
-            const cameraLocationsCtx = document.getElementById('cameraLocationsChart').getContext('2d');
-            let cameraLocationsChart;
-
-            function renderCameraLocationsChart(groupBy, canvas = cameraLocationsCtx) {
-                fetchData('camera_locations', groupBy, function(data) {
-                    const locations = [...new Set(data.map(item => item.camera_location))];
-                    const periods = [...new Set(data.map(item => item.period))];
-                    periods.sort();
-
-                    const datasets = locations.map((location, index) => {
-                        const dataPoints = periods.map(period => {
-                            const record = data.find(d => d.camera_location === location && d.period === period);
-                            return record ? parseInt(record.count) : 0;
-                        });
-
-                        const colors = [
-                            'rgba(255, 99, 132, 0.6)',
-                            'rgba(75, 192, 192, 0.6)',
-                            'rgba(255, 206, 86, 0.6)',
-                            'rgba(153, 102, 255, 0.6)',
-                            'rgba(255, 159, 64, 0.6)',
-                            'rgba(54, 162, 235, 0.6)',
-                            'rgba(255, 205, 86, 0.6)',
-                            'rgba(75, 192, 192, 0.6)',
-                            'rgba(153, 102, 255, 0.6)',
-                            'rgba(201, 203, 207, 0.6)'
-                        ];
-
-                        return {
-                            label: location,
-                            data: dataPoints,
-                            backgroundColor: colors[index % colors.length],
-                            borderColor: colors[index % colors.length],
-                            borderWidth: 1
-                        };
-                    });
-
-                    if (canvas.chartInstance) {
-                        canvas.chartInstance.destroy();
-                    }
-
-                    canvas.chartInstance = new Chart(canvas, {
-                        type: 'bar',
-                        data: {
-                            labels: periods,
-                            datasets: datasets
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            scales: {
-                                x: {
-                                    stacked: true
-                                },
-                                y: {
-                                    beginAtZero: true,
-                                    ticks: {
-                                        stepSize: 1
-                                    }
-                                }
-                            },
-                            plugins: {
-                                legend: {
-                                    position: 'bottom',
-                                }
-                            }
-                        }
-                    });
-                });
-            }
-
-            // 5. Risk Level Percentage Chart
-            const riskLevelPercentageCtx = document.getElementById('riskLevelPercentageChart').getContext('2d');
-            let riskLevelPercentageChart;
-
-            function renderRiskLevelPercentageChart(canvas = riskLevelPercentageCtx) {
-                fetchData('resolved_percentage_per_level', 'all', function(data) {
-                    const labels = data.map(item => `ความเสี่ยงระดับ ${item.risk_level}`);
-                    const counts = data.map(item => parseInt(item.total_events));
-                    const resolvedCounts = data.map(item => parseInt(item.resolved_events));
-                    const percentages = counts.map((count, index) => {
-                        return count > 0 ? ((resolvedCounts[index] / count) * 100).toFixed(2) : 0;
-                    });
-
-                    if (canvas.chartInstance) {
-                        canvas.chartInstance.destroy();
-                    }
-
-                    canvas.chartInstance = new Chart(canvas, {
-                        type: 'pie',
-                        data: {
-                            labels: labels,
-                            datasets: [{
-                                data: resolvedCounts,
-                                backgroundColor: [
-                                    'rgba(255, 99, 132, 0.6)',
-                                    'rgba(54, 162, 235, 0.6)',
-                                    'rgba(255, 206, 86, 0.6)',
-                                    'rgba(75, 192, 192, 0.6)',
-                                    'rgba(153, 102, 255, 0.6)'
-                                ],
-                                borderColor: [
-                                    'rgba(255,99,132,1)',
-                                    'rgba(54, 162, 235, 1)',
-                                    'rgba(255, 206, 86, 1)',
-                                    'rgba(75, 192, 192, 1)',
-                                    'rgba(153, 102, 255, 1)'
-                                ],
-                                borderWidth: 1
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            plugins: {
-                                legend: {
-                                    position: 'bottom',
-                                },
-                                tooltip: {
-                                    callbacks: {
-                                        label: function(context) {
-                                            let label = context.label || '';
-                                            if (label) {
-                                                label += ': ';
-                                            }
-                                            if (context.parsed !== null) {
-                                                label += `${context.parsed} (${percentages[context.dataIndex]}%)`;
-                                            }
-                                            return label;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
-                });
-            }
-
-            // 6. Top Areas Chart
-            const topAreasCtx = document.getElementById('topAreasChart').getContext('2d');
-            let topAreasChart;
-
-            function renderTopAreasChart(canvas = topAreasCtx) {
-                fetchData('top_areas', 'all', function(data) {
-                    const labels = data.map(item => item.area);
-                    const counts = data.map(item => parseInt(item.count));
-                    const total = counts.reduce((a, b) => a + b, 0);
-                    const percentages = counts.map(count => total > 0 ? ((count / total) * 100).toFixed(2) : 0);
-
-                    if (canvas.chartInstance) {
-                        canvas.chartInstance.destroy();
-                    }
-
-                    canvas.chartInstance = new Chart(canvas, {
-                        type: 'bar',
-                        data: {
-                            labels: labels,
-                            datasets: [{
-                                label: 'จำนวนเหตุการณ์',
-                                data: counts,
-                                backgroundColor: 'rgba(255, 159, 64, 0.6)',
-                                borderColor: 'rgba(255, 159, 64, 1)',
-                                borderWidth: 1
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            indexAxis: 'y',
-                            scales: {
-                                x: {
-                                    beginAtZero: true,
-                                    ticks: {
-                                        stepSize: 1
-                                    }
-                                }
-                            },
-                            plugins: {
-                                legend: {
-                                    display: false,
-                                },
-                                tooltip: {
-                                    callbacks: {
-                                        label: function(context) {
-                                            let label = `${context.parsed.x} (${percentages[context.dataIndex]}%)`;
-                                            return label;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
-                });
-            }
-
-            // เรียกใช้ฟังก์ชันกราฟครั้งแรก
-            renderRiskLevelChart('day');
-            renderElephantCountChart('day');
-            renderCameraLocationsChart('day');
-            renderSummaryEventsChart(); // สรุปเหตุการณ์
-            renderRiskLevelPercentageChart(); // ความเสี่ยงแต่ละระดับ
-            renderTopAreasChart(); // ลำดับบริเวณที่เกิดเหตุ
-
-            // เพิ่ม event listeners สำหรับการเปลี่ยนแปลงการกรองข้อมูล
-            document.getElementById('riskLevelGroupBy').addEventListener('change', function() {
-                renderRiskLevelChart(this.value);
-            });
-
-            document.getElementById('elephantCountGroupBy').addEventListener('change', function() {
-                renderElephantCountChart(this.value);
-            });
-
-            document.getElementById('cameraLocationsGroupBy').addEventListener('change', function() {
-                renderCameraLocationsChart(this.value);
-            });
-
-            // ปุ่มขยายกราฟ
-            const expandButtons = document.querySelectorAll('.expand-btn');
-            expandButtons.forEach(button => {
-                button.addEventListener('click', function() {
-                    const modalId = this.getAttribute('data-modal');
-                    const chartId = this.parentElement.parentElement.querySelector('canvas').id;
-                    const title = this.parentElement.parentElement.querySelector('h2').innerText;
-
-                    showModal(chartId, title, function(expandedCanvas) {
-                        switch (chartId) {
-                            case 'riskLevelChart':
-                                renderRiskLevelChart(document.getElementById('riskLevelGroupBy').value, expandedCanvas);
-                                break;
-                            case 'elephantCountChart':
-                                renderElephantCountChart(document.getElementById('elephantCountGroupBy').value, expandedCanvas);
-                                break;
-                            case 'cameraLocationsChart':
-                                renderCameraLocationsChart(document.getElementById('cameraLocationsGroupBy').value, expandedCanvas);
-                                break;
-                            case 'summaryEventsChart':
-                                renderSummaryEventsChart(expandedCanvas);
-                                break;
-                            case 'riskLevelPercentageChart':
-                                renderRiskLevelPercentageChart(expandedCanvas);
-                                break;
-                            case 'topAreasChart':
-                                renderTopAreasChart(expandedCanvas);
-                                break;
-                            default:
-                                console.error('Unknown chart ID:', chartId);
-                        }
-                    });
-                });
-            });
-
-            // ฟังก์ชันสำหรับแสดง Modal
-            function showModal(chartId, title, renderFunction) {
-                const modal = document.createElement('div');
-                modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
-                modal.innerHTML = `
-                    <div class="bg-white rounded-lg overflow-hidden w-11/12 md:w-4/5 lg:w-3/5 xl:w-2/3 relative">
-                        <button class="close-modal absolute top-2 right-2 text-gray-600 hover:text-gray-800 focus:outline-none">
-                            <i class="fas fa-times fa-lg"></i>
-                        </button>
-                        <div class="p-4">
-                            <h2 class="text-2xl font-semibold mb-4">${title}</h2>
-                            <canvas class="expanded-chart"></canvas>
+            <!-- Cards -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+				
+                <!-- การแจ้งเตือนเหตุการณ์ช้าง -->
+                <div class="flex flex-col p-6 bg-white rounded-lg shadow-md">
+                    <h3 class="mb-4 text-lg font-semibold text-gray-700">การแจ้งเตือนเหตุการณ์ช้าง</h3>
+                    <div class="flex flex-col space-y-2">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-600">ช้างอยู่บนถนน:</span>
+                            <span class="text-xl font-bold text-red-500"><?= number_format($elephantsOnRoadCount); ?> ตัว</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-600">รถ-ช้างอยู่ในพื้นที่เดียวกัน:</span>
+                            <span class="text-xl font-bold text-orange-500"><?= number_format($elephantsCarCount); ?> ตัว</span>
                         </div>
                     </div>
-                `;
+                </div>
+                <!-- ข้อมูลผู้ใช้งานระบบ -->
+                <div class="flex flex-col p-6 bg-white rounded-lg shadow-md">
+                    <h3 class="mb-4 text-lg font-semibold text-gray-700">ข้อมูลผู้ใช้งานระบบ</h3>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-600">ผู้ใช้งานปัจจุบัน:</span>
+                        <span class="text-xl font-bold text-blue-500">4 คน</span>
+                    </div>
+                </div>
+                <!-- สถานะการดำเนินงาน -->
+                <div class="flex flex-col p-6 bg-white rounded-lg shadow-md">
+                    <h3 class="mb-4 text-lg font-semibold text-gray-700">สถานะการดำเนินงาน</h3>
+                    <div class="flex flex-col space-y-2">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-600">ดำเนินการแล้ว:</span>
+                            <span class="text-xl font-bold text-green-500"><?= number_format($statusCountcompleted); ?> เหตุการณ์</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-600">รอดำเนินการ:</span>
+                            <span class="text-xl font-bold text-yellow-500"><?= number_format($statusCountpending); ?> เหตุการณ์</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- จำนวนกล้องเฝ้าระวัง -->
+                <div class="flex flex-col p-6 bg-white rounded-lg shadow-md">
+                    <h3 class="mb-4 text-lg font-semibold text-gray-700">จำนวนกล้องเฝ้าระวัง</h3>
+                    <div class="flex flex-col space-y-2">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-600">ทั้งหมด:</span>
+                            <span class="text-xl font-bold text-purple-500">8 ตัว</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-600">ใช้งานอยู่:</span>
+                            <span class="text-xl font-bold text-indigo-500"><?= number_format($elephantsCarCount); ?> ตัว</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-                const expandedCanvas = modal.querySelector('.expanded-chart');
-                const closeModalBtn = modal.querySelector('.close-modal');
+            <!-- Charts and Map -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- แผนที่ -->
+                <div class="col-span-1 h-64 lg:h-full bg-white rounded-lg shadow-md">
+                    <div id="map" class="h-full rounded-lg"></div>
+                </div>
 
-                closeModalBtn.addEventListener('click', () => {
-                    modal.classList.add('hidden');
-                    modal.remove();
-                });
+                <!-- Charts -->
+                <div class="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Chart 1: ช้างและรถ -->
+                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 chart-container">
+                        <h3 class="mb-4 text-lg font-semibold text-gray-700">การแจ้งเตือนช้างและรถ</h3>
+                        <canvas id="visitorInsightsChart"></canvas>
+                    </div>
+                    <!-- Chart 2: Online vs Offline Sales -->
+                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 chart-container">
+                        <h3 class="mb-4 text-lg font-semibold text-gray-700">Online vs Offline Sales</h3>
+                        <canvas id="totalRevenueChart"></canvas>
+                    </div>
+                    <!-- Chart 3: Customer Satisfaction -->
+                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 chart-container">
+                        <h3 class="mb-4 text-lg font-semibold text-gray-700">Customer Satisfaction</h3>
+                        <canvas id="customerSatisfactionChart"></canvas>
+                    </div>
+                    <!-- Chart 4: Target vs Reality -->
+                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 chart-container">
+                        <h3 class="mb-4 text-lg font-semibold text-gray-700">Target vs Reality</h3>
+                        <canvas id="targetVsRealityChart"></canvas>
+                    </div>
 
-                modal.addEventListener('click', (e) => {
-                    if (e.target === modal) {
-                        modal.classList.add('hidden');
-                        modal.remove();
-                    }
-                });
 
-                document.body.appendChild(modal);
+                </div>
+            </div>
+        </div>
+    </div>
 
-                // Render the chart inside the modal
-                renderFunction(expandedCanvas);
-            }
+    <!-- Leaflet.js -->
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <!-- Chart.js -->
+    <!-- ลบการโหลด Chart.js ซ้ำ -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> -->
 
-            // Error handling for chart loading
-            window.addEventListener('error', function(e) {
-                console.error('Chart Error:', e.error);
-                // แสดงข้อความแจ้งเตือนให้ผู้ใช้ทราบถ้ามีข้อผิดพลาด
-                if (e.target.tagName === 'CANVAS') {
-                    const container = e.target.parentElement;
-                    container.innerHTML += '<div class="text-red-500 mt-4">ไม่สามารถโหลดกราฟได้ กรุณารีเฟรชหน้าเว็บ</div>';
-                }
-            });
-        });
-
+    <script>
         // Mobile sidebar toggle
         const menuBtn = document.getElementById('menu-btn');
         const sidebar = document.querySelector('.sidebar');
-
         menuBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            sidebar.classList.toggle('open');
+            sidebar.classList.toggle('-translate-x-full');
         });
-
-        // Close sidebar when clicking outside
         document.addEventListener('click', (e) => {
             if (!sidebar.contains(e.target) && !menuBtn.contains(e.target)) {
-                sidebar.classList.remove('open');
+                sidebar.classList.add('-translate-x-full');
             }
+        });
+
+        // ตรวจสอบว่า chartData ถูกต้อง
+        console.log(chartData);
+
+        // ตัวอย่างกราฟที่ 1 (visitorInsightsChart)
+        const ctxVisitor = document.getElementById('visitorInsightsChart').getContext('2d');
+        const labelsVisitor = chartData.map(item => item.month);
+        const elephantData = chartData.map(item => item.elephant_count);
+        const elephantCarData = chartData.map(item => item.elephant_car_count);
+
+        new Chart(ctxVisitor, {
+            type: 'line',
+            data: {
+				
+                labels: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+                datasets: [
+                    {
+                        label: 'ช้างอยู่บนถนน',
+                        data: elephantData,
+                        borderColor: 'orange',
+                        backgroundColor: 'rgba(255, 165, 0, 0.2)',
+                        fill: true,
+                        tension: 0.4
+                    },
+                    {
+                        label: 'รถและช้างอยู่ในพื้นที่เดียวกัน',
+                        data: elephantCarData,
+                        borderColor: 'red',
+                        backgroundColor: 'rgba(255, 0, 0, 0.2)',
+                        fill: true,
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: { 
+                responsive: true,
+                maintainAspectRatio: true, // เปลี่ยนเป็น true เพื่อรักษาอัตราส่วน
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        // ตัวอย่างกราฟที่ 2 (totalRevenueChart)
+        const ctxRevenue = document.getElementById('totalRevenueChart').getContext('2d');
+        new Chart(ctxRevenue, {
+            type: 'bar',
+            data: {
+                labels: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+                datasets: [
+                    {
+                        label: 'Online Sales',
+                        data: [15000, 12000, 25000, 18000, 16000, 20000, 22000],
+                        backgroundColor: 'rgba(54, 162, 235, 0.6)'
+                    },
+                    {
+                        label: 'Offline Sales',
+                        data: [12000, 14000, 22000, 17000, 15000, 18000, 21000],
+                        backgroundColor: 'rgba(75, 192, 192, 0.6)'
+                    }
+                ]
+            },
+            options: { 
+                responsive: true,
+                maintainAspectRatio: true, // เปลี่ยนเป็น true เพื่อรักษาอัตราส่วน
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        // ตัวอย่างกราฟที่ 3 (customerSatisfactionChart)
+        const ctxSatisfaction = document.getElementById('customerSatisfactionChart').getContext('2d');
+        new Chart(ctxSatisfaction, {
+            type: 'line',
+            data: {
+                labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+                datasets: [
+                    {
+                        label: 'Last Month',
+                        data: [3004, 3500, 3300, 3100, 3200, 3400, 3500, 3700, 3800, 3900, 4000, 4200],
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                        fill: true,
+                        tension: 0.4
+                    },
+                    {
+                        label: 'This Month',
+                        data: [3500, 3800, 3700, 3600, 3900, 4000, 4200, 4300, 4400, 4500, 4600, 4800],
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        fill: true,
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: { 
+                responsive: true,
+                maintainAspectRatio: true, // เปลี่ยนเป็น true เพื่อรักษาอัตราส่วน
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        // ตัวอย่างกราฟที่ 4 (targetVsRealityChart)
+        const ctxTargetReality = document.getElementById('targetVsRealityChart').getContext('2d');
+        new Chart(ctxTargetReality, {
+            type: 'bar',
+            data: {
+                labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'],
+                datasets: [
+                    {
+                        label: 'Reality Sales',
+                        data: [8823, 9100, 8800, 9500, 10000, 11200, 11800],
+                        backgroundColor: 'rgba(255, 159, 64, 0.6)'
+                    },
+                    {
+                        label: 'Target Sales',
+                        data: [12122, 11500, 12500, 13000, 14000, 14200, 14500],
+                        backgroundColor: 'rgba(75, 192, 192, 0.6)'
+                    }
+                ]
+            },
+            options: { 
+                responsive: true,
+                maintainAspectRatio: true, // เปลี่ยนเป็น true เพื่อรักษาอัตราส่วน
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        // สร้างแผนที่ Leaflet.js
+        var map = L.map('map').setView([13.736717, 100.523186], 6); // พิกัดเริ่มต้นประเทศไทย
+
+        // เพิ่ม Tile Layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        // ตำแหน่งติดตั้งจาก PHP (แปลงเป็น JSON)
+        var installPoints = <?= json_encode($installPoints); ?>;
+
+        // Custom Icon สำหรับทุกจุด
+        var singleIcon = L.icon({
+            iconUrl: 'icons/IconLocation.png', // URL ไอคอนจุดเดียว
+            iconSize: [30, 30], // ขนาดไอคอน [กว้าง, สูง]
+            iconAnchor: [15, 30], // จุดยึดไอคอน [กลางด้านล่าง]
+            popupAnchor: [0, -30] // จุดยึด popup [กลางด้านบน]
+        });
+
+        // เพิ่ม Marker บนแผนที่โดยใช้ไอคอนเดียว
+        installPoints.forEach(function(point) {
+            var lat = parseFloat(point.lat_cam);
+            var lng = parseFloat(point.long_cam);
+            var name = point.cam || 'Unknown Camera'; // ใช้ชื่อกล้องหรือแสดง "Unknown Camera"
+
+            if (!isNaN(lat) && !isNaN(lng)) {
+                L.marker([lat, lng], { icon: singleIcon }) // ใช้ไอคอนเดียวกัน
+                 .bindPopup(`<strong>${name}</strong><br>Lat: ${lat}<br>Lng: ${lng}`) // Popup เมื่อคลิก
+                 .addTo(map);
+            }
+			// ตรวจจับการเลือกช่วงเวลาใน dropdown
+document.getElementById('timePeriod').addEventListener('change', function() {
+    var timePeriod = this.value;  // รับค่าจาก dropdown
+    fetchChartData(timePeriod);  // เรียกฟังก์ชันดึงข้อมูลใหม่
+});
+
+function fetchChartData(timePeriod) {
+    // ส่งค่าไปยัง server เพื่อดึงข้อมูลใหม่
+    fetch(`?action=fetch_data&group_by=${timePeriod}&chart=elephant_count`)
+        .then(response => response.json())
+        .then(data => {
+            updateChart(data, timePeriod);  // อัปเดตกราฟตามข้อมูลที่ได้รับ
+        })
+        .catch(error => console.error('Error fetching chart data:', error));
+}
+
+function updateChart(data, timePeriod) {
+    // อัปเดตข้อมูลกราฟที่แสดง
+    const ctx = document.getElementById('visitorInsightsChart').getContext('2d');
+    const labels = data.map(item => item.period);
+    const elephantData = data.map(item => item.count);
+    
+    // อัปเดตกราฟ
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'ช้างอยู่บนถนน',
+                    data: elephantData,
+                    borderColor: 'orange',
+                    backgroundColor: 'rgba(255, 165, 0, 0.2)',
+                    fill: true,
+                    tension: 0.4
+                }
+            ]
+        },
+        options: { 
+            responsive: true,
+            maintainAspectRatio: true, 
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+}
+
         });
     </script>
 </body>
 </html>
+
 <?php
 ob_end_flush();
 ?>
