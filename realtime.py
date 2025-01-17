@@ -1,3 +1,40 @@
+"""
+This script captures frames from a camera, processes them to detect roads and objects (elephants and cars), 
+draws perspective lines on the road, and sends the detection results to a server.
+
+Modules and Libraries:
+- ultralytics: For YOLO model loading and inference.
+- cv2: OpenCV for image processing and camera handling.
+- numpy: For numerical operations.
+- matplotlib.pyplot: For plotting (not used in the main script).
+- torch: For PyTorch operations.
+- requests: For sending HTTP requests.
+- base64: For encoding images.
+- time, datetime, pytz: For time-related operations.
+- os, tempfile: For file handling.
+
+Functions:
+- draw_perspective_lines: Draws perspective lines on the road based on the road mask.
+- process_road_image: Processes the image to detect roads and draw perspective lines.
+- encode_image: Encodes an image to Base64.
+- send_to_server: Sends data to the server via POST request.
+- calculate_destination_latlong: Calculates new latitude and longitude based on distance and bearing.
+- convert_to_native_types: Recursively converts NumPy data types in a structure to native Python types.
+- detect_objects: Detects objects (elephants and cars) using the primary YOLO model.
+- create_test_payload: Creates a payload for the API.
+- process_frame: Captures a frame from the camera, processes it, and sends API requests based on detections.
+- main: Initializes models, camera, and starts the main loop to process frames every 10 seconds while displaying a live feed.
+
+Main Workflow:
+1. Initialize camera and YOLO models.
+2. Capture frames from the camera.
+3. Process each frame to detect roads and objects.
+4. Draw perspective lines on the road if detected.
+5. Create a payload with detection results and send it to the server.
+6. Display the processed frame with detection results.
+7. Repeat the process every 10 seconds.
+"""
+
 from ultralytics import YOLO
 import cv2
 import numpy as np
@@ -507,7 +544,6 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
 
         # Send data to server
         response = send_to_server(SERVER_URL, data)
-
         if response:
             if response.status_code == 200:
                 print("Data sent successfully:", response.text)
