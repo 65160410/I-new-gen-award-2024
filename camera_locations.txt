@@ -1,3 +1,8 @@
 SOURCE0_CAM_007=ทับลาน
 SOURCE0_CAM_001=เขาใหญ่
 SOURCE0_CAM_002=อุทยานทับลาน
+SOURCE0_CAM_003=ทับลาน
+SOURCE0_CAM_004=เขาใหญ่
+SOURCE0_CAM_005=อุทยานทับลาน
+SOURCE0_CAM_006=ทับลาน
+SOURCE0_CAM_008=เขาใหญ่

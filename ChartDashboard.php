@@ -1,9 +1,20 @@
-<?php
-//ChartDashboard.php
+<?php 
+// ChartDashboard.php
+// เริ่มต้น Output Buffering
 ob_start();
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+
+// ปรับการตั้งค่าการแสดงข้อผิดพลาด
+if (isset($_GET['action'])) {
+    // ปิดการแสดงข้อผิดพลาดสำหรับ AJAX
+    ini_set('display_errors', 0);
+    ini_set('display_startup_errors', 0);
+    error_reporting(0);
+} else {
+    // เปิดการแสดงข้อผิดพลาดสำหรับการเรียกหน้าเว็บปกติ
+    ini_set('display_errors', 1);
+    ini_set('display_startup_errors', 1);
+    error_reporting(E_ALL);
+}
 
 session_start();
 
@@ -31,13 +42,21 @@ if (!isset($_SESSION['INITIATED'])) {
     $_SESSION['INITIATED'] = true;
 }
 
+// รวมไฟล์เชื่อมต่อฐานข้อมูล
 include '../elephant_api/db.php';
 
 // ตรวจสอบการเชื่อมต่อฐานข้อมูล
 if ($conn->connect_error) {
     error_log("Connection failed: " . $conn->connect_error);
-    die("Connection failed.");
-}
+    if (isset($_GET['action'])) {
+        // สำหรับ AJAX ให้ตอบกลับด้วย JSON ว่าง
+        header('Content-Type: application/json');
+        echo json_encode(["error" => "Connection failed."]);
+    } else {
+        die("Connection failed.");
+    }
+    exit;
+} 
 
 /* 
  * ฟังก์ชันสำหรับจัดกลุ่มข้อมูลตามช่วงเวลา
@@ -157,9 +176,9 @@ function getChartData($conn, $chartType, $groupBy) {
                 return [];
         }
 
-        // เพิ่ม LIMIT ถ้ามี
+        // เพิ่ม LIMIT ถ้ามีและใช้การแทรกค่าลงไปโดยตรง
         if ($limit > 0 && in_array($chartType, ['risk_level', 'elephant_count', 'camera_locations'])) {
-            $query .= " LIMIT ?";
+            $query .= " LIMIT " . intval($limit);
         }
 
         $stmt = $conn->prepare($query);
@@ -167,9 +186,7 @@ function getChartData($conn, $chartType, $groupBy) {
             throw new Exception("Error in query preparation: " . $conn->error);
         }
 
-        if ($limit > 0 && in_array($chartType, ['risk_level', 'elephant_count', 'camera_locations'])) {
-            $stmt->bind_param("i", $limit);
-        }
+        // เนื่องจากเราได้แทรก LIMIT เรียบร้อยแล้ว ไม่ต้องผูกพารามิเตอร์เพิ่มเติม
 
         $stmt->execute();
         $result = $stmt->get_result();
@@ -193,15 +210,16 @@ function getChartData($conn, $chartType, $groupBy) {
     }
 }
 
-// ฟังก์ชันสำหรับดึงค่าต่างๆ พร้อมกันในหนึ่งฟังก์ชันเพื่อลดจำนวนการเชื่อมต่อฐานข้อมูล
-function getCounts($conn) {
+/**
+ * ฟังก์ชันสำหรับดึงค่าต่างๆ พร้อมกันในหนึ่งฟังก์ชันเพื่อลดจำนวนการเชื่อมต่อฐานข้อมูล
+ */
+function getCounts($conn, $totalCameras) {
     $counts = [];
     $queries = [
         'elephantsOnRoadCount' => "SELECT COUNT(*) AS count FROM detections WHERE elephant = ?",
         'elephantsCarCount' => "SELECT COUNT(*) AS count FROM detections WHERE elephant = ? AND alert = ?",
         'statusCountcompleted' => "SELECT COUNT(*) AS count FROM detections WHERE status = ?",
         'statusCountpending' => "SELECT COUNT(*) AS count FROM detections WHERE status = ?",
-        'CamOffline' => "SELECT COUNT(*) AS count FROM detections WHERE CamStatus = 'offline'", // แทนที่ด้วยคำสั่งจริง
     ];
 
     // elephantsOnRoadCount
@@ -240,36 +258,128 @@ function getCounts($conn) {
     $counts['statusCountpending'] = $result->fetch_assoc()['count'] ?? 0;
     $stmt->close();
 
-    // CamOffline
-    $stmt = $conn->prepare($queries['CamOffline']);
+    // กล้องออนไลน์ (ส่งข้อมูลภายใน 40 วินาที)
+    $stmt = $conn->prepare("SELECT DISTINCT id_cam FROM detections WHERE time >= (NOW() - INTERVAL 40 SECOND)");
     $stmt->execute();
     $result = $stmt->get_result();
-    $counts['CamOffline'] = $result->fetch_assoc()['count'] ?? 0;
+    $onlineCameras = [];
+    while ($row = $result->fetch_assoc()) {
+        $onlineCameras[] = $row['id_cam']; // เก็บเป็นสตริง
+    }
     $stmt->close();
+
+    // หารายชื่อกล้องที่ไม่ออนไลน์โดยการใช้ array_diff
+    $allCameras = [
+        "SOURCE0_CAM_001",
+        "SOURCE0_CAM_002",
+        "SOURCE0_CAM_003",
+        "SOURCE0_CAM_004",
+        "SOURCE0_CAM_005",
+        "SOURCE0_CAM_006",
+        "SOURCE0_CAM_007",
+        "SOURCE0_CAM_008",
+    ];
+
+    $offlineCameras = array_diff($allCameras, $onlineCameras);
+
+    // นับจำนวนกล้องออนไลน์และไม่ออนไลน์
+    $camerasOnline = count($onlineCameras);
+    $camerasOffline = count($offlineCameras);
+
+    // ล็อกข้อมูลเพื่อการตรวจสอบ
+    error_log("camerasOnline: $camerasOnline");
+    error_log("camerasOffline: $camerasOffline");
+    error_log("offlineCameras: " . implode(", ", $offlineCameras));
+
+    // ส่งข้อมูล
+    $counts['CamOffline'] = $camerasOffline;
+    $counts['camerasOnline'] = $camerasOnline;
 
     return $counts;
 }
 
-// ตรวจสอบการเรียกผ่าน AJAX
-if (isset($_GET['action']) && $_GET['action'] === 'fetch_data') {
-    $chartType = filter_input(INPUT_GET, 'chart', FILTER_SANITIZE_STRING);
-    $groupBy = filter_input(INPUT_GET, 'group_by', FILTER_SANITIZE_STRING) ?? 'day';
-
-    $allowedCharts = ['risk_level', 'elephant_count', 'camera_locations', 'summary_events', 'resolved_percentage_per_level', 'top_areas'];
-    $allowedGroupBy = ['day', 'week', 'month', 'year', 'all'];
-
-    if (!in_array($chartType, $allowedCharts) || !in_array($groupBy, $allowedGroupBy)) {
-        echo json_encode([]);
-        exit;
-    }
-
-    $data = getChartData($conn, $chartType, $groupBy);
-    echo json_encode($data, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
-    exit;
-}
+// กำหนดจำนวนกล้องทั้งหมดเป็น 8 ตัว
+$totalCameras = 8;
 
 // ดึงข้อมูลสถิติต่างๆ
-$counts = getCounts($conn);
+$counts = getCounts($conn, $totalCameras);
+
+// ตรวจสอบการเรียกผ่าน AJAX
+if (isset($_GET['action'])) {
+    // ล้าง Output Buffer ก่อนส่ง JSON
+    ob_clean();
+    
+    if ($_GET['action'] === 'fetch_data') {
+        $chartType = filter_input(INPUT_GET, 'chart', FILTER_SANITIZE_STRING);
+        $groupBy = filter_input(INPUT_GET, 'group_by', FILTER_SANITIZE_STRING) ?? 'day';
+
+        $allowedCharts = ['risk_level', 'elephant_count', 'camera_locations', 'summary_events', 'resolved_percentage_per_level', 'top_areas'];
+        $allowedGroupBy = ['day', 'week', 'month', 'year', 'all'];
+
+        if (!in_array($chartType, $allowedCharts) || !in_array($groupBy, $allowedGroupBy)) {
+            header('Content-Type: application/json');
+            echo json_encode([]);
+            exit;
+        }
+
+        $data = getChartData($conn, $chartType, $groupBy);
+        header('Content-Type: application/json');
+        echo json_encode($data, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+        exit;
+    } elseif ($_GET['action'] === 'fetch_camera_status') {
+        // กำหนดรายชื่อกล้องทั้งหมด (ถ้าไม่มีตาราง cameras ในฐานข้อมูล)
+        $allCameras = [
+            "SOURCE0_CAM_001",
+            "SOURCE0_CAM_002",
+            "SOURCE0_CAM_003",
+            "SOURCE0_CAM_004",
+            "SOURCE0_CAM_005",
+            "SOURCE0_CAM_006",
+            "SOURCE0_CAM_007",
+            "SOURCE0_CAM_008",
+        ];
+
+        // ดึงรายชื่อกล้องที่ออนไลน์และเก็บเป็นสตริง
+        $stmt = $conn->prepare("SELECT DISTINCT id_cam FROM detections WHERE time >= (NOW() - INTERVAL 40 SECOND)");
+        if ($stmt === false) {
+            error_log("Prepare failed: " . $conn->error);
+            header('Content-Type: application/json');
+            echo json_encode([
+                'error' => 'Prepare failed'
+            ]);
+            exit;
+        }
+
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $onlineCameras = [];
+        while ($row = $result->fetch_assoc()) {
+            $onlineCameras[] = $row['id_cam']; // เก็บเป็นสตริง
+        }
+        $stmt->close();
+
+        // หารายชื่อกล้องที่ไม่ออนไลน์โดยการใช้ array_diff
+        $offlineCameras = array_diff($allCameras, $onlineCameras);
+
+        // นับจำนวนกล้องออนไลน์และไม่ออนไลน์
+        $camerasOnline = count($onlineCameras);
+        $camerasOffline = count($offlineCameras);
+
+        // ล็อกข้อมูลเพื่อการตรวจสอบ
+        error_log("camerasOnline: $camerasOnline");
+        error_log("camerasOffline: $camerasOffline");
+        error_log("offlineCameras: " . implode(", ", $offlineCameras));
+
+        // ส่งข้อมูลเป็น JSON
+        header('Content-Type: application/json');
+        echo json_encode([
+            'camerasOnline' => $camerasOnline,
+            'camerasOffline' => $camerasOffline,
+            'offlineCameras' => array_values($offlineCameras) // รีอินเด็กซ์อาร์เรย์
+        ]);
+        exit;
+    }
+}
 
 // ดึงข้อมูลการตรวจจับในแต่ละเดือน
 $sql = "SELECT 
@@ -281,6 +391,10 @@ $sql = "SELECT
         ORDER BY DATE_FORMAT(time, '%Y-%m')";
 
 $stmt = $conn->prepare($sql);
+if ($stmt === false) {
+    error_log("Prepare failed: " . $conn->error);
+    die("Prepare failed.");
+}
 $stmt->execute();
 $result = $stmt->get_result();
 
@@ -294,6 +408,10 @@ $stmt->close();
 $installPoints = [];
 $sql = "SELECT lat_cam, long_cam, id_cam FROM detections WHERE lat_cam IS NOT NULL AND long_cam IS NOT NULL";
 $stmt = $conn->prepare($sql);
+if ($stmt === false) {
+    error_log("Prepare failed: " . $conn->error);
+    die("Prepare failed.");
+}
 $stmt->execute();
 $result = $stmt->get_result();
 while ($row = $result->fetch_assoc()) {
@@ -310,6 +428,10 @@ $sql = "SELECT DATE(d.time) AS date, SUM(id.fatalities) AS total_fatalities, SUM
         ORDER BY DATE(d.time)";
 
 $stmt = $conn->prepare($sql);
+if ($stmt === false) {
+    error_log("Prepare failed: " . $conn->error);
+    die("Prepare failed.");
+}
 $stmt->execute();
 $result = $stmt->get_result();
 $injuryDeathData = [];
@@ -318,28 +440,9 @@ while ($row = $result->fetch_assoc()) {
 }
 $stmt->close();
 
-// ดึงจำนวนกล้องทั้งหมด
-$totalCameras = 0;
-$stmt = $conn->prepare("SELECT COUNT(*) AS count FROM detections");
-$stmt->execute();
-$result = $stmt->get_result();
-if ($row = $result->fetch_assoc()) {
-    $totalCameras = (int)$row['count'];
-}
-$stmt->close();
-
 // ส่งข้อมูลไปยัง JavaScript ในรูปแบบ JSON อย่างปลอดภัย
 $monthlyDataJson = json_encode($monthlyData, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 $incidentDetailsJson = json_encode($injuryDeathData, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
-
-// ส่งค่าจำนวนกล้องทั้งหมดและใช้งานอยู่ไปยัง JavaScript
-echo "<script>
-    const totalCameras = $totalCameras;
-    let camOfflineCount = " . $counts['CamOffline'] . ";
-</script>";
-
-// ปิดการเชื่อมต่อฐานข้อมูล
-$conn->close();
 ?>
 <!DOCTYPE html>
 <html lang="th">
@@ -359,6 +462,11 @@ $conn->close();
         #map {
             height: 100%;
             width: 100%;
+            z-index: 0; /* กำหนด z-index ให้ต่ำกว่า Modal */
+        }
+        /* กำหนด z-index สำหรับ Modal */
+        .z-9999 {
+            z-index: 9999;
         }
     </style>
 </head>
@@ -425,7 +533,7 @@ $conn->close();
                     <div class="flex flex-col space-y-2">
                         <div class="flex justify-between items-center">
                             <span class="text-gray-600">ช้างอยู่บนถนน:</span>
-                            <span class="text-xl font-bold text-orange-500"><?= number_format($counts['elephantsOnRoadCount']); ?> ตัว</span>
+                            <span style="font-size: 1.25rem; font-weight: 700; color: #ff9900;"><?= number_format($counts['elephantsOnRoadCount']); ?> ตัว</span>
                         </div>
                         <div class="flex justify-between items-center">
                             <span class="text-gray-600">รถ-ช้างอยู่พื้นที่เดียวกัน:</span>
@@ -465,7 +573,9 @@ $conn->close();
                         </div>
                         <div class="flex justify-between items-center">
                             <span class="text-gray-600">ใช้งานอยู่:</span>
-                            <span id="camOfflineCount" class="text-xl font-bold text-indigo-500"><?= number_format($counts['CamOffline']); ?> ตัว</span> 
+                            <span id="camOnlineCount" class="text-xl font-bold text-indigo-500 cursor-pointer <?= $counts['CamOffline'] > 0 ? 'underline text-indigo-600' : ''; ?>">
+                                <?= number_format($counts['camerasOnline']); ?> ตัว
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -513,6 +623,27 @@ $conn->close();
         </div>
     </div>
 
+    <!-- Modal -->
+    <div id="offlineCamerasModal" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 hidden z-9999">
+        <div class="bg-white rounded-lg shadow-lg w-96">
+            <!-- Header ของ Modal -->
+            <div class="flex justify-between items-center p-4 border-b">
+                <h2 class="text-xl font-semibold">กล้องที่ไม่ออนไลน์</h2>
+                <button id="closeModal" class="text-gray-700 hover:text-gray-900">&times;</button>
+            </div>
+            <!-- เนื้อหาของ Modal -->
+            <div class="p-4">
+                <ul id="offlineCamerasListModal" class="list-disc pl-5">
+                    <!-- รายชื่อกล้องที่ไม่ออนไลน์จะถูกเพิ่มที่นี่ผ่าน JavaScript -->
+                </ul>
+            </div>
+            <!-- Footer ของ Modal -->
+            <div class="flex justify-end p-4 border-t">
+                <button id="closeModalFooter" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">ปิด</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Leaflet.js -->
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
@@ -521,21 +652,63 @@ $conn->close();
         const chartData = <?= $monthlyDataJson; ?>;
         const injuryDeathData = <?= $incidentDetailsJson; ?>;
         const installPoints = <?= json_encode($installPoints, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
-        // const totalCameras = <?= $totalCameras; ?>; // จำนวนกล้องทั้งหมด (ตอนนี้ถูกกำหนดใน PHP)
-        // let camOfflineCount = <?= number_format($counts['CamOffline']); ?>; // จำนวนกล้องที่ใช้งานอยู่ (ตอนนี้ถูกกำหนดใน PHP)
         let offlineTimer;
 
         // ฟังก์ชันสำหรับอัปเดตจำนวนกล้องที่ใช้งานอยู่ใน DOM
-        function updateCamOfflineDisplay(count) {
-            const camOfflineElement = document.getElementById('camOfflineCount');
-            camOfflineElement.textContent = count.toLocaleString() + ' ตัว';
-            if (count < totalCameras) {
-                camOfflineElement.classList.remove('text-indigo-500');
-                camOfflineElement.classList.add('text-red-500'); // เปลี่ยนสีเป็นแดง
+        function updateCamOnlineDisplay(onlineCount) {
+            const camOnlineElement = document.getElementById('camOnlineCount');
+            camOnlineElement.textContent = onlineCount.toLocaleString() + ' ตัว';
+            if (onlineCount < totalCameras) {
+                camOnlineElement.classList.remove('text-indigo-500');
+                camOnlineElement.classList.add('text-red-500', 'underline', 'text-indigo-600', 'cursor-pointer');
             } else {
-                camOfflineElement.classList.remove('text-red-500');
-                camOfflineElement.classList.add('text-indigo-500'); // เปลี่ยนกลับเป็นสีน้ำเงิน
+                camOnlineElement.classList.remove('text-red-500', 'underline', 'text-indigo-600', 'cursor-pointer');
+                camOnlineElement.classList.add('text-indigo-500');
             }
+        }
+
+        // ฟังก์ชันสำหรับอัปเดตรายชื่อกล้องที่ไม่ออนไลน์ใน Modal
+        function updateCameraLists(offlineCameras) {
+            const offlineListModal = document.getElementById('offlineCamerasListModal');
+            offlineListModal.innerHTML = '';
+
+            // เพิ่มกล้องที่ไม่ออนไลน์ใน Modal
+            offlineCameras.forEach(cam => {
+                const li = document.createElement('li');
+                li.textContent = cam;
+                offlineListModal.appendChild(li);
+            });
+        }
+
+        // ฟังก์ชันสำหรับเปิด Modal
+        function openModal() {
+            const modal = document.getElementById('offlineCamerasModal');
+            modal.classList.remove('hidden');
+        }
+
+        // ฟังก์ชันสำหรับปิด Modal
+        function closeModal() {
+            const modal = document.getElementById('offlineCamerasModal');
+            modal.classList.add('hidden');
+        }
+
+        // ฟังก์ชันสำหรับดึงสถานะกล้องจากเซิร์ฟเวอร์
+        function fetchCameraStatus() {
+            fetch(`?action=fetch_camera_status&_=${new Date().getTime()}`) // เพิ่ม cache-busting
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Error from server:', data.error);
+                        return;
+                    }
+                    console.log("Camera Status:", data); // เพิ่ม log เพื่อตรวจสอบข้อมูลที่ได้รับ
+                    updateCamOnlineDisplay(data.camerasOnline);
+                    updateCameraLists(data.offlineCameras);
+                    camerasOnline = data.camerasOnline;
+                    camerasOffline = data.camerasOffline;
+                    resetOfflineTimer();
+                })
+                .catch(error => console.error('Error fetching camera status:', error));
         }
 
         // ฟังก์ชันสำหรับตั้งค่าเวลาหมดอายุ
@@ -546,9 +719,9 @@ $conn->close();
             }
             // ตั้งเวลาใหม่
             offlineTimer = setTimeout(() => {
-                // ตั้งค่าจำนวนกล้องที่ใช้งานอยู่เป็นจำนวนกล้องทั้งหมด - camOfflineCount
-                const newCount = totalCameras - camOfflineCount;
-                updateCamOfflineDisplay(newCount);
+                // ตั้งค่าจำนวนกล้องที่ใช้งานอยู่เป็นจำนวนกล้องทั้งหมด - camerasOnline
+                const newCount = totalCameras - camerasOnline;
+                updateCamOnlineDisplay(newCount);
             }, 60000); // 1 นาที = 60000 มิลลิวินาที
         }
 
@@ -559,7 +732,9 @@ $conn->close();
 
         // เริ่มต้น Timer เมื่อโหลดหน้า
         window.onload = function() {
-            startOfflineTimer();
+            fetchCameraStatus(); // เรียกครั้งแรกเมื่อโหลดหน้า
+            // ตั้งเวลาให้เรียกทุกๆ 40 วินาที
+            setInterval(fetchCameraStatus, 40000); // 40000 มิลลิวินาที = 40 วินาที
         }
 
         // Mobile sidebar toggle
@@ -575,6 +750,30 @@ $conn->close();
                 sidebar.classList.add('-translate-x-full');
             }
         });
+
+        // เปิด Modal เมื่อคลิกที่จำนวนกล้องที่ออนไลน์
+        let camerasOnline = <?= $counts['camerasOnline']; ?>;
+        let camerasOffline = <?= $counts['CamOffline']; ?>;
+
+        const camOnlineElement = document.getElementById('camOnlineCount');
+        if (camOnlineElement) {
+            camOnlineElement.addEventListener('click', () => {
+                if (camerasOffline > 0) {
+                    console.log("camOnlineCount clicked"); // ตรวจสอบใน Console
+                    openModal();
+                }
+            });
+        }
+
+        // ปิด Modal เมื่อคลิกที่ปุ่มปิด
+        const closeModalButton = document.getElementById('closeModal');
+        const closeModalFooterButton = document.getElementById('closeModalFooter');
+        if (closeModalButton) {
+            closeModalButton.addEventListener('click', closeModal);
+        }
+        if (closeModalFooterButton) {
+            closeModalFooterButton.addEventListener('click', closeModal);
+        }
 
         // ตัวอย่างกราฟที่ 1 (visitorInsightsChart)
         const ctxVisitor = document.getElementById('visitorInsightsChart').getContext('2d');
@@ -764,11 +963,11 @@ $conn->close();
             popupAnchor: [0, -30] // จุดยึด popup [กลางด้านบน]
         });
 
-        // เพิ่ม Marker บนแผนที่โดยใช้ไอคอนเดียว
+        // เพิ่ม Marker บนแผนที่โดยใช้ไอคอนเดียวกัน
         installPoints.forEach(function(point) {
             var lat = parseFloat(point.lat_cam);
             var lng = parseFloat(point.long_cam);
-            var name = point.cam || 'Unknown Camera'; // ใช้ชื่อกล้องหรือแสดง "Unknown Camera"
+            var name = point.id_cam ? `Camera ID: ${point.id_cam}` : 'Unknown Camera'; // ใช้ชื่อกล้องหรือแสดง "Unknown Camera"
 
             if (!isNaN(lat) && !isNaN(lng)) {
                 L.marker([lat, lng], { icon: singleIcon }) // ใช้ไอคอนเดียวกัน
@@ -782,9 +981,11 @@ $conn->close();
             fetch(`?action=fetch_data&group_by=${timePeriod}&chart=${chartType}`)
                 .then(response => response.json())
                 .then(data => {
-                    updateChart(data, chartType);
-                    // รีเซ็ต Timer เมื่อมีการอัปเดตข้อมูล
-                    resetOfflineTimer();
+                    if (Array.isArray(data)) {
+                        updateChart(data, chartType);
+                    } else {
+                        console.warn('Unexpected data format:', data);
+                    }
                 })
                 .catch(error => console.error('Error fetching chart data:', error));
         }
@@ -812,52 +1013,11 @@ $conn->close();
             var timePeriod = this.value;  // รับค่าจาก dropdown
             fetchChartData(timePeriod, 'elephant_count');  // เรียกฟังก์ชันดึงข้อมูลใหม่
         });
-
-        // ฟังก์ชันสำหรับอัปเดตกล้องที่ใช้งานอยู่
-        function updateCamOfflineDisplay(count) {
-            const camOfflineElement = document.getElementById('camOfflineCount');
-            camOfflineElement.textContent = count.toLocaleString() + ' ตัว';
-            if (count < totalCameras) {
-                camOfflineElement.classList.remove('text-indigo-500');
-                camOfflineElement.classList.add('text-red-500'); // เปลี่ยนสีเป็นแดง
-            } else {
-                camOfflineElement.classList.remove('text-red-500');
-                camOfflineElement.classList.add('text-indigo-500'); // เปลี่ยนกลับเป็นสีน้ำเงิน
-            }
-        }
-
-        // ฟังก์ชันสำหรับตั้งค่าเวลาหมดอายุ
-        function startOfflineTimer() {
-            // เคลียร์เวลาเดิมถ้ามี
-            if (offlineTimer) {
-                clearTimeout(offlineTimer);
-            }
-            // ตั้งเวลาใหม่
-            offlineTimer = setTimeout(() => {
-                // ตั้งค่าจำนวนกล้องที่ใช้งานอยู่เป็นจำนวนกล้องทั้งหมด - camOfflineCount
-                const newCount = totalCameras - camOfflineCount;
-                updateCamOfflineDisplay(newCount);
-            }, 60000); // 1 นาที = 60000 มิลลิวินาที
-        }
-
-        // รีเซ็ต Timer เมื่อมีการอัปเดตข้อมูล
-        function resetOfflineTimer() {
-            startOfflineTimer();
-        }
-
-        // เริ่มต้น Timer เมื่อโหลดหน้า
-        window.onload = function() {
-            startOfflineTimer();
-        }
-
-        // ปรับขนาดแผนที่เมื่อเปลี่ยนขนาดหน้าจอ
-        window.addEventListener('resize', function() {
-            map.invalidateSize();
-        });
     </script>
 </body>
 </html>
 
 <?php
+// สิ้นสุด Output Buffering
 ob_end_flush();
 ?>
