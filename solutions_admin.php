@@ -273,7 +273,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Failed to insert solution detail: " . $stmt_insert_solution->error);
             }
             $stmt_insert_solution->close();
-
+			
+			
+			
+            // 4. Insert into incident_details
+            $insert_incident_sql = "INSERT INTO incident_details (incident_id, fatalities, injuries) VALUES (?, ?, ?)";
+            $stmt_insert_incident = $conn->prepare($insert_incident_sql);
+            if (!$stmt_insert_incident) {
+                throw new Exception("Failed to prepare insert incident_details query.");
+            }
+            $stmt_insert_incident->bind_param("iii", $detection_id, $fatalities, $injuries);
+            if (!$stmt_insert_incident->execute()) {
+                throw new Exception("Failed to insert into incident_details: " . $stmt_insert_incident->error);
+            }
+            $stmt_insert_incident->close();
+			
+			
             // Commit transaction
             $conn->commit();
 
@@ -335,15 +350,22 @@ if (!$stmt_details) {
     die("Prepare failed: " . $conn->error);
 }
 
+// ประมวลผลจำนวนรถ
+$car_count = isset($detection['car_count']) && is_numeric($detection['car_count']) ? intval($detection['car_count']) : 0;
+// ประมวลผลจำนวนช้าง 
+$elephant_count = isset($detection['elephant_count']) && is_numeric($detection['elephant_count']) ? intval($detection['elephant_count']) : 0;
 
-$sql = "INSERT INTO incident_details (incident_id, fatalities, injuries) 
-        VALUES (?,?,?);";
+// สร้างอาร์เรย์สำหรับสิ่งที่ตรวจจับ
+$detection_types = [];
+if ($car_count > 0) {
+    $detection_types[] = "รถ ". $car_count . " คัน";
+}
+if ($elephant_count > 0) {
+    $detection_types[] = "ช้าง ". $elephant_count . " ตัว";
+}
 
-$stmt_details->bind_param("i", $detection_id);
-$stmt_details->execute();
-$result_details = $stmt_details->get_result();
-$solution_details = $result_details->fetch_all(MYSQLI_ASSOC);
-$stmt_details->close();
+// สร้างข้อความแสดงผลจาก array
+$detection_display = !empty($detection_types) ? implode(", ", $detection_types) : "ไม่พบการตรวจจับ";
 
 // Determine if detection is completed
 $isCompleted = ($detection['status'] === 'completed');
@@ -382,7 +404,7 @@ $conn->close();
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <p><strong>เวลาดำเนินการ:</strong> <?= isset($detection['time']) ? safe_htmlspecialchars($detection['time']) : 'N/A' ?></p>
               
-                <p><strong>สิ่งที่ตรวจจับ:</strong> <?= ($detection['lat_ele'] !== null && $detection['long_ele'] !== null) ? safe_htmlspecialchars($detection['lat_ele']) . ", " . safe_htmlspecialchars($detection['long_ele']) : '<span class="text-red-600">Elephant missing</span>' ?></p>
+                <p><strong>สิ่งที่ตรวจจับ:</strong> <?= $detection_display ?></p>
                 <p><strong>ระดับความรุนแรง:</strong> <span class="<?= safe_htmlspecialchars($detection['intensity_class']) ?> px-2 py-1 rounded"><?= safe_htmlspecialchars($detection['intensity_text']) ?></span></p>
                 <p><strong>สถานะการดำเนินการ:</strong> <?= safe_htmlspecialchars(translateStatus($detection['status'])) ?></p>
             </div>

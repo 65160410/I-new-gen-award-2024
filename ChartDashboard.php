@@ -1,4 +1,5 @@
 <?php
+//ChartDashboard.php
 ob_start();
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
@@ -6,17 +7,36 @@ error_reporting(E_ALL);
 
 session_start();
 
+// กำหนดค่าเวลาสำหรับการหมดเวลาเซสชัน (30 นาที)
+define('SESSION_TIMEOUT', 1800);
+
 // ตรวจสอบการเข้าสู่ระบบแอดมิน
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
     header("Location: admin_login.php");
     exit;
 }
 
+// ตรวจสอบการหมดเวลาเซสชัน
+if (isset($_SESSION['LAST_ACTIVITY']) && (time() - $_SESSION['LAST_ACTIVITY']) > SESSION_TIMEOUT) {
+    session_unset();
+    session_destroy();
+    header("Location: admin_login.php");
+    exit;
+}
+$_SESSION['LAST_ACTIVITY'] = time(); // อัพเดทเวลาการใช้งานล่าสุด
+
+// ป้องกันการโจมตีแบบ Session Fixation
+if (!isset($_SESSION['INITIATED'])) {
+    session_regenerate_id(true);
+    $_SESSION['INITIATED'] = true;
+}
+
 include '../elephant_api/db.php';
 
 // ตรวจสอบการเชื่อมต่อฐานข้อมูล
-if (!$conn) {
-    die("Connection failed: " . mysqli_connect_error());
+if ($conn->connect_error) {
+    error_log("Connection failed: " . $conn->connect_error);
+    die("Connection failed.");
 }
 
 /* 
@@ -40,22 +60,22 @@ function getGroupByClause($groupBy, $timeField) {
 }
 
 /**
- * ฟังก์ชันสำหรับดึงข้อมูลจากตาราง detections
+ * ฟังก์ชันสำหรับดึงข้อมูลจากตาราง detections โดยใช้ prepared statements
  */
 function getChartData($conn, $chartType, $groupBy) {
     try {
-        $limit = match ($groupBy) {
+        $groupByClause = getGroupByClause($groupBy, 'time');
+        $limitMap = [
             'day' => 7,
             'week' => 4,
             'month' => 12,
             'year' => 5,
             'all' => 0,
-            default => 7,
-        };
+        ];
+        $limit = $limitMap[$groupBy] ?? 7;
 
         switch ($chartType) {
             case 'risk_level':
-                $groupByClause = getGroupByClause($groupBy, 'time');
                 $query = "
                     SELECT 
                         $groupByClause AS period,
@@ -71,7 +91,6 @@ function getChartData($conn, $chartType, $groupBy) {
                 break;
 
             case 'elephant_count':
-                $groupByClause = getGroupByClause($groupBy, 'time');
                 $query = "
                     SELECT 
                         $groupByClause AS period, 
@@ -86,7 +105,6 @@ function getChartData($conn, $chartType, $groupBy) {
                 break;
 
             case 'camera_locations':
-                $groupByClause = getGroupByClause($groupBy, 'time');
                 $query = "
                     SELECT 
                         camera_location,
@@ -139,28 +157,34 @@ function getChartData($conn, $chartType, $groupBy) {
                 return [];
         }
 
-        if ($stmt = mysqli_prepare($conn, $query)) {
-            if (isset($limit) && $limit > 0) {
-                $query .= " LIMIT ?";
-                mysqli_stmt_bind_param($stmt, "i", $limit);
-            }
-
-            mysqli_stmt_execute($stmt);
-            $result = mysqli_stmt_get_result($stmt);
-        } else {
-            throw new Exception("Error in query preparation: " . mysqli_error($conn));
+        // เพิ่ม LIMIT ถ้ามี
+        if ($limit > 0 && in_array($chartType, ['risk_level', 'elephant_count', 'camera_locations'])) {
+            $query .= " LIMIT ?";
         }
+
+        $stmt = $conn->prepare($query);
+        if ($stmt === false) {
+            throw new Exception("Error in query preparation: " . $conn->error);
+        }
+
+        if ($limit > 0 && in_array($chartType, ['risk_level', 'elephant_count', 'camera_locations'])) {
+            $stmt->bind_param("i", $limit);
+        }
+
+        $stmt->execute();
+        $result = $stmt->get_result();
 
         $data = [];
-        while ($row = mysqli_fetch_assoc($result)) {
+        while ($row = $result->fetch_assoc()) {
             $data[] = $row;
         }
+
+        $stmt->close();
 
         if (in_array($chartType, ['summary_events', 'resolved_percentage_per_level'])) {
             return $data[0] ?? [];
         }
 
-        mysqli_free_result($result);
         return $data;
 
     } catch (Exception $e) {
@@ -169,24 +193,83 @@ function getChartData($conn, $chartType, $groupBy) {
     }
 }
 
+// ฟังก์ชันสำหรับดึงค่าต่างๆ พร้อมกันในหนึ่งฟังก์ชันเพื่อลดจำนวนการเชื่อมต่อฐานข้อมูล
+function getCounts($conn) {
+    $counts = [];
+    $queries = [
+        'elephantsOnRoadCount' => "SELECT COUNT(*) AS count FROM detections WHERE elephant = ?",
+        'elephantsCarCount' => "SELECT COUNT(*) AS count FROM detections WHERE elephant = ? AND alert = ?",
+        'statusCountcompleted' => "SELECT COUNT(*) AS count FROM detections WHERE status = ?",
+        'statusCountpending' => "SELECT COUNT(*) AS count FROM detections WHERE status = ?",
+        'CamOffline' => "SELECT COUNT(*) AS count FROM detections WHERE CamStatus = 'offline'", // แทนที่ด้วยคำสั่งจริง
+    ];
+
+    // elephantsOnRoadCount
+    $stmt = $conn->prepare($queries['elephantsOnRoadCount']);
+    $elephant = '1';
+    $stmt->bind_param("s", $elephant);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $counts['elephantsOnRoadCount'] = $result->fetch_assoc()['count'] ?? 0;
+    $stmt->close();
+
+    // elephantsCarCount
+    $stmt = $conn->prepare($queries['elephantsCarCount']);
+    $alert = '1';
+    $stmt->bind_param("ss", $elephant, $alert);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $counts['elephantsCarCount'] = $result->fetch_assoc()['count'] ?? 0;
+    $stmt->close();
+
+    // statusCountcompleted
+    $stmt = $conn->prepare($queries['statusCountcompleted']);
+    $statusCompleted = 'completed';
+    $stmt->bind_param("s", $statusCompleted);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $counts['statusCountcompleted'] = $result->fetch_assoc()['count'] ?? 0;
+    $stmt->close();
+
+    // statusCountpending
+    $stmt = $conn->prepare($queries['statusCountpending']);
+    $statusPending = 'pending';
+    $stmt->bind_param("s", $statusPending);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $counts['statusCountpending'] = $result->fetch_assoc()['count'] ?? 0;
+    $stmt->close();
+
+    // CamOffline
+    $stmt = $conn->prepare($queries['CamOffline']);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $counts['CamOffline'] = $result->fetch_assoc()['count'] ?? 0;
+    $stmt->close();
+
+    return $counts;
+}
+
 // ตรวจสอบการเรียกผ่าน AJAX
 if (isset($_GET['action']) && $_GET['action'] === 'fetch_data') {
-    $chartType = $_GET['chart'] ?? '';
-    $groupBy = $_GET['group_by'] ?? 'day';
+    $chartType = filter_input(INPUT_GET, 'chart', FILTER_SANITIZE_STRING);
+    $groupBy = filter_input(INPUT_GET, 'group_by', FILTER_SANITIZE_STRING) ?? 'day';
 
-    $chartType = mysqli_real_escape_string($conn, $chartType);
-    $groupBy = mysqli_real_escape_string($conn, $groupBy);
+    $allowedCharts = ['risk_level', 'elephant_count', 'camera_locations', 'summary_events', 'resolved_percentage_per_level', 'top_areas'];
+    $allowedGroupBy = ['day', 'week', 'month', 'year', 'all'];
+
+    if (!in_array($chartType, $allowedCharts) || !in_array($groupBy, $allowedGroupBy)) {
+        echo json_encode([]);
+        exit;
+    }
 
     $data = getChartData($conn, $chartType, $groupBy);
-    echo json_encode($data);
+    echo json_encode($data, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
     exit;
 }
 
 // ดึงข้อมูลสถิติต่างๆ
-$elephantsOnRoadCount = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) AS count FROM detections WHERE elephant = '1' AND car_count = '0'"))['count'] ?? 0;
-$elephantsCarCount = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) AS count FROM detections WHERE elephant = '1' AND car_count = '1'"))['count'] ?? 0;
-$statusCountcompleted = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) AS count FROM detections WHERE status = 'completed'"))['count'] ?? 0;
-$statusCountpending = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COUNT(*) AS count FROM detections WHERE status = 'pending'"))['count'] ?? 0;
+$counts = getCounts($conn);
 
 // ดึงข้อมูลการตรวจจับในแต่ละเดือน
 $sql = "SELECT 
@@ -196,28 +279,67 @@ $sql = "SELECT
         FROM detections
         GROUP BY DATE_FORMAT(time, '%Y-%m')
         ORDER BY DATE_FORMAT(time, '%Y-%m')";
-$result = $conn->query($sql);
 
-$data = [];
-if ($result->num_rows > 0) {
-    while($row = $result->fetch_assoc()) {
-        $data[] = $row;
-    }
+$stmt = $conn->prepare($sql);
+$stmt->execute();
+$result = $stmt->get_result();
+
+$monthlyData = [];
+while($row = $result->fetch_assoc()) {
+    $monthlyData[] = $row;
 }
-
-// ส่งข้อมูลไปยัง JavaScript ในรูปแบบ JSON
-$jsonData = json_encode($data);
-echo "<script>var chartData = $jsonData;</script>";
+$stmt->close();
 
 // ดึงข้อมูลตำแหน่งติดตั้งกล้อง
 $installPoints = [];
-$sql = "SELECT lat_cam, long_cam, id_cam FROM detections"; 
-$result = mysqli_query($conn, $sql);
-while ($row = mysqli_fetch_assoc($result)) {
+$sql = "SELECT lat_cam, long_cam, id_cam FROM detections WHERE lat_cam IS NOT NULL AND long_cam IS NOT NULL";
+$stmt = $conn->prepare($sql);
+$stmt->execute();
+$result = $stmt->get_result();
+while ($row = $result->fetch_assoc()) {
     $installPoints[] = $row;
 }
+$stmt->close();
 
-mysqli_close($conn);
+// ดึงข้อมูลจากตาราง incident_details พร้อมวันที่
+// สมมติว่าตาราง incident_details มีฟิลด์ incident_date ซึ่งเป็นวันที่เกิดเหตุ
+$sql = "SELECT DATE(d.time) AS date, SUM(id.fatalities) AS total_fatalities, SUM(id.injuries) AS total_injuries 
+        FROM incident_details id 
+        JOIN detections d ON id.incident_id = d.id 
+        GROUP BY DATE(d.time) 
+        ORDER BY DATE(d.time)";
+
+$stmt = $conn->prepare($sql);
+$stmt->execute();
+$result = $stmt->get_result();
+$injuryDeathData = [];
+while ($row = $result->fetch_assoc()) {
+    $injuryDeathData[] = $row;
+}
+$stmt->close();
+
+// ดึงจำนวนกล้องทั้งหมด
+$totalCameras = 0;
+$stmt = $conn->prepare("SELECT COUNT(*) AS count FROM detections");
+$stmt->execute();
+$result = $stmt->get_result();
+if ($row = $result->fetch_assoc()) {
+    $totalCameras = (int)$row['count'];
+}
+$stmt->close();
+
+// ส่งข้อมูลไปยัง JavaScript ในรูปแบบ JSON อย่างปลอดภัย
+$monthlyDataJson = json_encode($monthlyData, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+$incidentDetailsJson = json_encode($injuryDeathData, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+
+// ส่งค่าจำนวนกล้องทั้งหมดและใช้งานอยู่ไปยัง JavaScript
+echo "<script>
+    const totalCameras = $totalCameras;
+    let camOfflineCount = " . $counts['CamOffline'] . ";
+</script>";
+
+// ปิดการเชื่อมต่อฐานข้อมูล
+$conn->close();
 ?>
 <!DOCTYPE html>
 <html lang="th">
@@ -237,10 +359,6 @@ mysqli_close($conn);
         #map {
             height: 100%;
             width: 100%;
-        }
-        /* กำหนดความสูงคงที่ให้กับ Container ของกราฟ */
-        .chart-container {
-            height: 16rem; /* 64 * 0.25rem = 16rem */
         }
     </style>
 </head>
@@ -287,22 +405,31 @@ mysqli_close($conn);
             <header class="mb-6">
                 <h1 class="text-3xl font-bold text-gray-800">อุทยานแห่งชาติเขาใหญ่</h1>
                 <p class="text-xl font-semibold text-gray-600">Dashboard สรุปเหตุการณ์และความเสี่ยง</p>
+                <div class="mt-4">
+                    <label for="timePeriod" class="mr-2 text-gray-700">เลือกช่วงเวลา:</label>
+                    <select id="timePeriod" class="p-2 border rounded">
+                        <option value="day">วัน</option>
+                        <option value="week">สัปดาห์</option>
+                        <option value="month" selected>เดือน</option>
+                        <option value="year">ปี</option>
+                        <option value="all">ทั้งหมด</option>
+                    </select>
+                </div>
             </header>
 
             <!-- Cards -->
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-				
                 <!-- การแจ้งเตือนเหตุการณ์ช้าง -->
                 <div class="flex flex-col p-6 bg-white rounded-lg shadow-md">
                     <h3 class="mb-4 text-lg font-semibold text-gray-700">การแจ้งเตือนเหตุการณ์ช้าง</h3>
                     <div class="flex flex-col space-y-2">
                         <div class="flex justify-between items-center">
                             <span class="text-gray-600">ช้างอยู่บนถนน:</span>
-                            <span class="text-xl font-bold text-red-500"><?= number_format($elephantsOnRoadCount); ?> ตัว</span>
+                            <span class="text-xl font-bold text-orange-500"><?= number_format($counts['elephantsOnRoadCount']); ?> ตัว</span>
                         </div>
                         <div class="flex justify-between items-center">
-                            <span class="text-gray-600">รถ-ช้างอยู่ในพื้นที่เดียวกัน:</span>
-                            <span class="text-xl font-bold text-orange-500"><?= number_format($elephantsCarCount); ?> ตัว</span>
+                            <span class="text-gray-600">รถ-ช้างอยู่พื้นที่เดียวกัน:</span>
+                            <span class="text-xl font-bold text-red-500"><?= number_format($counts['elephantsCarCount']); ?> ตัว</span>
                         </div>
                     </div>
                 </div>
@@ -320,11 +447,11 @@ mysqli_close($conn);
                     <div class="flex flex-col space-y-2">
                         <div class="flex justify-between items-center">
                             <span class="text-gray-600">ดำเนินการแล้ว:</span>
-                            <span class="text-xl font-bold text-green-500"><?= number_format($statusCountcompleted); ?> เหตุการณ์</span>
+                            <span class="text-xl font-bold text-green-500"><?= number_format($counts['statusCountcompleted']); ?> ครั้ง</span>
                         </div>
                         <div class="flex justify-between items-center">
                             <span class="text-gray-600">รอดำเนินการ:</span>
-                            <span class="text-xl font-bold text-yellow-500"><?= number_format($statusCountpending); ?> เหตุการณ์</span>
+                            <span class="text-xl font-bold text-yellow-500"><?= number_format($counts['statusCountpending']); ?> ครั้ง</span>
                         </div>
                     </div>
                 </div>
@@ -334,11 +461,11 @@ mysqli_close($conn);
                     <div class="flex flex-col space-y-2">
                         <div class="flex justify-between items-center">
                             <span class="text-gray-600">ทั้งหมด:</span>
-                            <span class="text-xl font-bold text-purple-500">8 ตัว</span>
+                            <span id="totalCameras" class="text-xl font-bold text-purple-500"><?= number_format($totalCameras); ?> ตัว</span>
                         </div>
                         <div class="flex justify-between items-center">
                             <span class="text-gray-600">ใช้งานอยู่:</span>
-                            <span class="text-xl font-bold text-indigo-500"><?= number_format($elephantsCarCount); ?> ตัว</span>
+                            <span id="camOfflineCount" class="text-xl font-bold text-indigo-500"><?= number_format($counts['CamOffline']); ?> ตัว</span> 
                         </div>
                     </div>
                 </div>
@@ -353,28 +480,34 @@ mysqli_close($conn);
 
                 <!-- Charts -->
                 <div class="col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <!-- Chart 1: ช้างและรถ -->
-                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 chart-container">
-                        <h3 class="mb-4 text-lg font-semibold text-gray-700">การแจ้งเตือนช้างและรถ</h3>
-                        <canvas id="visitorInsightsChart"></canvas>
+                    <!-- Chart 1: การแจ้งเตือนช้างและรถ -->
+                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 h-96">
+                        <h3 class="text-lg font-semibold text-gray-700 mb-2">การแจ้งเตือนช้างและรถ</h3>
+                        <div class="flex-1">
+                            <canvas id="visitorInsightsChart" class="w-full h-full"></canvas>
+                        </div>
                     </div>
                     <!-- Chart 2: Online vs Offline Sales -->
-                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 chart-container">
-                        <h3 class="mb-4 text-lg font-semibold text-gray-700">Online vs Offline Sales</h3>
-                        <canvas id="totalRevenueChart"></canvas>
+                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 h-96">
+                        <h3 class="text-lg font-semibold text-gray-700 mb-2">Online vs Offline Sales</h3>
+                        <div class="flex-1">
+                            <canvas id="totalRevenueChart" class="w-full h-full"></canvas>
+                        </div>
                     </div>
                     <!-- Chart 3: Customer Satisfaction -->
-                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 chart-container">
-                        <h3 class="mb-4 text-lg font-semibold text-gray-700">Customer Satisfaction</h3>
-                        <canvas id="customerSatisfactionChart"></canvas>
+                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 h-96">
+                        <h3 class="text-lg font-semibold text-gray-700 mb-2">Customer Satisfaction</h3>
+                        <div class="flex-1">
+                            <canvas id="customerSatisfactionChart" class="w-full h-full"></canvas>
+                        </div>
                     </div>
-                    <!-- Chart 4: Target vs Reality -->
-                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 chart-container">
-                        <h3 class="mb-4 text-lg font-semibold text-gray-700">Target vs Reality</h3>
-                        <canvas id="targetVsRealityChart"></canvas>
+                    <!-- Chart 4: จำนวนผู้บาดเจ็บ/เสียชีวิต -->
+                    <div class="flex flex-col bg-white rounded-lg shadow-md p-4 h-96">
+                        <h3 class="text-lg font-semibold text-gray-700 mb-2">จำนวนผู้บาดเจ็บ/เสียชีวิต</h3>
+                        <div class="flex-1">
+                            <canvas id="targetVsRealityChart" class="w-full h-full"></canvas>
+                        </div>
                     </div>
-
-
                 </div>
             </div>
         </div>
@@ -382,14 +515,57 @@ mysqli_close($conn);
 
     <!-- Leaflet.js -->
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-    <!-- Chart.js -->
-    <!-- ลบการโหลด Chart.js ซ้ำ -->
-    <!-- <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> -->
 
     <script>
+        // ส่งข้อมูลจาก PHP ไปยัง JavaScript
+        const chartData = <?= $monthlyDataJson; ?>;
+        const injuryDeathData = <?= $incidentDetailsJson; ?>;
+        const installPoints = <?= json_encode($installPoints, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+        // const totalCameras = <?= $totalCameras; ?>; // จำนวนกล้องทั้งหมด (ตอนนี้ถูกกำหนดใน PHP)
+        // let camOfflineCount = <?= number_format($counts['CamOffline']); ?>; // จำนวนกล้องที่ใช้งานอยู่ (ตอนนี้ถูกกำหนดใน PHP)
+        let offlineTimer;
+
+        // ฟังก์ชันสำหรับอัปเดตจำนวนกล้องที่ใช้งานอยู่ใน DOM
+        function updateCamOfflineDisplay(count) {
+            const camOfflineElement = document.getElementById('camOfflineCount');
+            camOfflineElement.textContent = count.toLocaleString() + ' ตัว';
+            if (count < totalCameras) {
+                camOfflineElement.classList.remove('text-indigo-500');
+                camOfflineElement.classList.add('text-red-500'); // เปลี่ยนสีเป็นแดง
+            } else {
+                camOfflineElement.classList.remove('text-red-500');
+                camOfflineElement.classList.add('text-indigo-500'); // เปลี่ยนกลับเป็นสีน้ำเงิน
+            }
+        }
+
+        // ฟังก์ชันสำหรับตั้งค่าเวลาหมดอายุ
+        function startOfflineTimer() {
+            // เคลียร์เวลาเดิมถ้ามี
+            if (offlineTimer) {
+                clearTimeout(offlineTimer);
+            }
+            // ตั้งเวลาใหม่
+            offlineTimer = setTimeout(() => {
+                // ตั้งค่าจำนวนกล้องที่ใช้งานอยู่เป็นจำนวนกล้องทั้งหมด - camOfflineCount
+                const newCount = totalCameras - camOfflineCount;
+                updateCamOfflineDisplay(newCount);
+            }, 60000); // 1 นาที = 60000 มิลลิวินาที
+        }
+
+        // รีเซ็ต Timer เมื่อมีการอัปเดตข้อมูล
+        function resetOfflineTimer() {
+            startOfflineTimer();
+        }
+
+        // เริ่มต้น Timer เมื่อโหลดหน้า
+        window.onload = function() {
+            startOfflineTimer();
+        }
+
         // Mobile sidebar toggle
         const menuBtn = document.getElementById('menu-btn');
         const sidebar = document.querySelector('.sidebar');
+
         menuBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             sidebar.classList.toggle('-translate-x-full');
@@ -400,20 +576,16 @@ mysqli_close($conn);
             }
         });
 
-        // ตรวจสอบว่า chartData ถูกต้อง
-        console.log(chartData);
-
         // ตัวอย่างกราฟที่ 1 (visitorInsightsChart)
         const ctxVisitor = document.getElementById('visitorInsightsChart').getContext('2d');
         const labelsVisitor = chartData.map(item => item.month);
         const elephantData = chartData.map(item => item.elephant_count);
         const elephantCarData = chartData.map(item => item.elephant_car_count);
 
-        new Chart(ctxVisitor, {
+        let visitorChart = new Chart(ctxVisitor, {
             type: 'line',
             data: {
-				
-                labels: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+                labels: labelsVisitor,
                 datasets: [
                     {
                         label: 'ช้างอยู่บนถนน',
@@ -427,7 +599,7 @@ mysqli_close($conn);
                         label: 'รถและช้างอยู่ในพื้นที่เดียวกัน',
                         data: elephantCarData,
                         borderColor: 'red',
-                        backgroundColor: 'rgba(255, 0, 0, 0.2)',
+                        backgroundColor: 'rgba(239,68,68, 0.2)',
                         fill: true,
                         tension: 0.4
                     }
@@ -435,7 +607,7 @@ mysqli_close($conn);
             },
             options: { 
                 responsive: true,
-                maintainAspectRatio: true, // เปลี่ยนเป็น true เพื่อรักษาอัตราส่วน
+                maintainAspectRatio: false,
                 scales: {
                     y: {
                         beginAtZero: true
@@ -465,7 +637,7 @@ mysqli_close($conn);
             },
             options: { 
                 responsive: true,
-                maintainAspectRatio: true, // เปลี่ยนเป็น true เพื่อรักษาอัตราส่วน
+                maintainAspectRatio: false,
                 scales: {
                     y: {
                         beginAtZero: true
@@ -501,7 +673,7 @@ mysqli_close($conn);
             },
             options: { 
                 responsive: true,
-                maintainAspectRatio: true, // เปลี่ยนเป็น true เพื่อรักษาอัตราส่วน
+                maintainAspectRatio: false,
                 scales: {
                     y: {
                         beginAtZero: true
@@ -510,32 +682,68 @@ mysqli_close($conn);
             }
         });
 
-        // ตัวอย่างกราฟที่ 4 (targetVsRealityChart)
+        // ตัวอย่างกราฟที่ 4 (targetVsRealityChart) - จำนวนผู้บาดเจ็บ/เสียชีวิต
         const ctxTargetReality = document.getElementById('targetVsRealityChart').getContext('2d');
-        new Chart(ctxTargetReality, {
+        const labelsTargetReality = injuryDeathData.map(item => item.date);
+        const fatalities = injuryDeathData.map(item => item.total_fatalities);
+        const injuries = injuryDeathData.map(item => item.total_injuries);
+
+        let targetVsRealityChart = new Chart(ctxTargetReality, {
             type: 'bar',
             data: {
-                labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'],
+                labels: labelsTargetReality,
                 datasets: [
                     {
-                        label: 'Reality Sales',
-                        data: [8823, 9100, 8800, 9500, 10000, 11200, 11800],
-                        backgroundColor: 'rgba(255, 159, 64, 0.6)'
+                        label: 'จำนวนผู้เสียชีวิต',
+                        data: fatalities,
+                        backgroundColor: 'rgba(255, 0, 0, 0.6)', // สีแดงจัด
+                        borderColor: 'rgba(255, 0, 0, 1)', // สีแดงจัด
+                        borderWidth: 1
                     },
                     {
-                        label: 'Target Sales',
-                        data: [12122, 11500, 12500, 13000, 14000, 14200, 14500],
-                        backgroundColor: 'rgba(75, 192, 192, 0.6)'
+                        label: 'จำนวนผู้บาดเจ็บ',
+                        data: injuries,
+                        backgroundColor: 'rgba(255, 140, 0, 0.6)', // สีส้มเข้ม
+                        borderColor: 'rgba(255, 140, 0, 1)', // สีส้มเข้ม
+                        borderWidth: 1
                     }
                 ]
             },
             options: { 
                 responsive: true,
-                maintainAspectRatio: true, // เปลี่ยนเป็น true เพื่อรักษาอัตราส่วน
+                maintainAspectRatio: false,
                 scales: {
                     y: {
-                        beginAtZero: true
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'จำนวน'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'วันที่'
+                        }
                     }
+                },
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'จำนวนผู้บาดเจ็บและเสียชีวิตต่อวัน'
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    legend: {
+                        position: 'top',
+                    }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
                 }
             }
         });
@@ -547,9 +755,6 @@ mysqli_close($conn);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; OpenStreetMap contributors'
         }).addTo(map);
-
-        // ตำแหน่งติดตั้งจาก PHP (แปลงเป็น JSON)
-        var installPoints = <?= json_encode($installPoints); ?>;
 
         // Custom Icon สำหรับทุกจุด
         var singleIcon = L.icon({
@@ -570,56 +775,84 @@ mysqli_close($conn);
                  .bindPopup(`<strong>${name}</strong><br>Lat: ${lat}<br>Lng: ${lng}`) // Popup เมื่อคลิก
                  .addTo(map);
             }
-			// ตรวจจับการเลือกช่วงเวลาใน dropdown
-document.getElementById('timePeriod').addEventListener('change', function() {
-    var timePeriod = this.value;  // รับค่าจาก dropdown
-    fetchChartData(timePeriod);  // เรียกฟังก์ชันดึงข้อมูลใหม่
-});
+        });
 
-function fetchChartData(timePeriod) {
-    // ส่งค่าไปยัง server เพื่อดึงข้อมูลใหม่
-    fetch(`?action=fetch_data&group_by=${timePeriod}&chart=elephant_count`)
-        .then(response => response.json())
-        .then(data => {
-            updateChart(data, timePeriod);  // อัปเดตกราฟตามข้อมูลที่ได้รับ
-        })
-        .catch(error => console.error('Error fetching chart data:', error));
-}
+        // ฟังก์ชันในการดึงข้อมูลใหม่และอัปเดตกราฟ
+        function fetchChartData(timePeriod, chartType) {
+            fetch(`?action=fetch_data&group_by=${timePeriod}&chart=${chartType}`)
+                .then(response => response.json())
+                .then(data => {
+                    updateChart(data, chartType);
+                    // รีเซ็ต Timer เมื่อมีการอัปเดตข้อมูล
+                    resetOfflineTimer();
+                })
+                .catch(error => console.error('Error fetching chart data:', error));
+        }
 
-function updateChart(data, timePeriod) {
-    // อัปเดตข้อมูลกราฟที่แสดง
-    const ctx = document.getElementById('visitorInsightsChart').getContext('2d');
-    const labels = data.map(item => item.period);
-    const elephantData = data.map(item => item.count);
-    
-    // อัปเดตกราฟ
-    new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'ช้างอยู่บนถนน',
-                    data: elephantData,
-                    borderColor: 'orange',
-                    backgroundColor: 'rgba(255, 165, 0, 0.2)',
-                    fill: true,
-                    tension: 0.4
-                }
-            ]
-        },
-        options: { 
-            responsive: true,
-            maintainAspectRatio: true, 
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
+        // ฟังก์ชันในการอัปเดตกราฟ
+        function updateChart(data, chartType) {
+            switch(chartType) {
+                case 'elephant_count':
+                    const labels = data.map(item => item.period);
+                    const counts = data.map(item => item.count);
+                    
+                    // อัปเดต visitorInsightsChart
+                    visitorChart.data.labels = labels;
+                    visitorChart.data.datasets[0].data = counts;
+                    visitorChart.update();
+                    break;
+                // เพิ่ม case สำหรับ chart อื่นๆ ตามต้องการ
+                default:
+                    console.warn('Unknown chart type:', chartType);
             }
         }
-    });
-}
 
+        // ตัวอย่างการใช้งานกับ dropdown
+        document.getElementById('timePeriod').addEventListener('change', function() {
+            var timePeriod = this.value;  // รับค่าจาก dropdown
+            fetchChartData(timePeriod, 'elephant_count');  // เรียกฟังก์ชันดึงข้อมูลใหม่
+        });
+
+        // ฟังก์ชันสำหรับอัปเดตกล้องที่ใช้งานอยู่
+        function updateCamOfflineDisplay(count) {
+            const camOfflineElement = document.getElementById('camOfflineCount');
+            camOfflineElement.textContent = count.toLocaleString() + ' ตัว';
+            if (count < totalCameras) {
+                camOfflineElement.classList.remove('text-indigo-500');
+                camOfflineElement.classList.add('text-red-500'); // เปลี่ยนสีเป็นแดง
+            } else {
+                camOfflineElement.classList.remove('text-red-500');
+                camOfflineElement.classList.add('text-indigo-500'); // เปลี่ยนกลับเป็นสีน้ำเงิน
+            }
+        }
+
+        // ฟังก์ชันสำหรับตั้งค่าเวลาหมดอายุ
+        function startOfflineTimer() {
+            // เคลียร์เวลาเดิมถ้ามี
+            if (offlineTimer) {
+                clearTimeout(offlineTimer);
+            }
+            // ตั้งเวลาใหม่
+            offlineTimer = setTimeout(() => {
+                // ตั้งค่าจำนวนกล้องที่ใช้งานอยู่เป็นจำนวนกล้องทั้งหมด - camOfflineCount
+                const newCount = totalCameras - camOfflineCount;
+                updateCamOfflineDisplay(newCount);
+            }, 60000); // 1 นาที = 60000 มิลลิวินาที
+        }
+
+        // รีเซ็ต Timer เมื่อมีการอัปเดตข้อมูล
+        function resetOfflineTimer() {
+            startOfflineTimer();
+        }
+
+        // เริ่มต้น Timer เมื่อโหลดหน้า
+        window.onload = function() {
+            startOfflineTimer();
+        }
+
+        // ปรับขนาดแผนที่เมื่อเปลี่ยนขนาดหน้าจอ
+        window.addEventListener('resize', function() {
+            map.invalidateSize();
         });
     </script>
 </body>

@@ -109,7 +109,7 @@ function getAddressFromCoords($lat, $lng) {
 }
 
 // ฟังก์ชันแปลง Intensity Level และกำหนดคลาสสี
-function getIntensityInfo($elephant, $alert) {
+function getIntensityInfo($elephant, $alert, $distance = null) { // เพิ่มพารามิเตอร์ $distance
     if ($elephant && $alert) {
         return ['text' => 'ฉุกเฉิน', 'class' => 'bg-red-600 text-white'];
     } elseif ($elephant && !$alert) {
@@ -159,8 +159,8 @@ $sql_detections = "
         detections.distance_ele,
         detections.alert,
         detections.status,
-		detections.car_count,
-		detections.elephant_count,
+        detections.car_count,
+        detections.elephant_count,
         images.timestamp,
         images.image_path
     FROM detections
@@ -483,19 +483,19 @@ $conn->close();
             </header>
 
             <!-- Header Alert -->
-            <div id="headerAlert" class="fixed top-20 right-5 bg-red-600 text-white px-4 py-2 rounded shadow-lg opacity-0 transform -translate-y-4 transition-all duration-300">
+            <div id="headerAlert" class="fixed top-20 right-5 bg-red-600 text-white px-4 py-2 rounded shadow-lg opacity-0 transform -translate-y-4 transition-all duration-300 z-50">
                 <span id="headerAlertMessage"></span>
                 <button id="closeHeaderAlert" class="ml-4">&times;</button>
             </div>
 
             <!-- Popup Notification -->
-            <div id="animalPopup" class="fixed top-20 right-5 bg-red-600 text-white px-4 py-2 rounded shadow-lg opacity-0 transform -translate-y-4 transition-all duration-300">
+            <div id="animalPopup" class="fixed top-20 right-5 bg-red-600 text-white px-4 py-2 rounded shadow-lg opacity-0 transform -translate-y-4 transition-all duration-300 z-50">
                 <span id="popupMessage"></span>
                 <button id="closePopup" class="ml-4">&times;</button>
             </div>
 
             <!-- Modal for Image -->
-            <div id="imageModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden">
+            <div id="imageModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
                 <div class="bg-white rounded-lg p-4 relative max-w-3xl w-full">
                     <span class="absolute top-2 right-2 text-2xl font-bold cursor-pointer" id="closeImageModal">&times;</span>
                     <img id="modalImage" src="" alt="Detection Image" class="w-full h-auto rounded">
@@ -679,6 +679,7 @@ $conn->close();
 
     // Modal (image)
     function openImageModal(path) {
+        console.log("Opening modal with image:", path); // สำหรับ debugging
         if (!path) return;
         const modal = document.getElementById("imageModal");
         const modalImg = document.getElementById("modalImage");
@@ -784,7 +785,7 @@ $conn->close();
         const hd = document.getElementById("headerAlert");
         const mg = document.getElementById("headerAlertMessage");
         if (!hd || !mg) return;
-        hd.className = `fixed top-20 right-5 ${colorClass} px-4 py-2 rounded shadow-lg transition-all duration-300`;
+        hd.className = `fixed top-20 right-5 ${colorClass} px-4 py-2 rounded shadow-lg transition-all duration-300 z-50`;
         mg.textContent = msg;
         hd.classList.remove('opacity-0', '-translate-y-4');
         hd.classList.add('opacity-100', 'translate-y-0');
@@ -800,7 +801,7 @@ $conn->close();
         const popup = document.getElementById("animalPopup");
         const pm = document.getElementById("popupMessage");
         if (!popup || !pm) return;
-        popup.className = `fixed top-20 right-5 ${colorClass} px-4 py-2 rounded shadow-lg transition-all duration-300`;
+        popup.className = `fixed top-20 right-5 ${colorClass} px-4 py-2 rounded shadow-lg transition-all duration-300 z-50`;
         pm.textContent = msg;
         popup.classList.remove('opacity-0', '-translate-y-4');
         popup.classList.add('opacity-100', 'translate-y-0');
@@ -824,30 +825,30 @@ $conn->close();
         }, 60000); // 1 นาที
     }
 
-function handleNewDetection(d) {
-    let message = '';
-    let colorClass = '';
-    let needAlert = false;
+    function handleNewDetection(d) {
+        let message = '';
+        let colorClass = '';
+        let needAlert = false;
 
-    if (d.elephant && d.alert) {
-        message = `⚠️ ความเสี่ยงฉุกเฉิน! รถและช้างอยู่ในพื้นที่เดียวกัน! ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
-        colorClass = 'bg-red-600 text-white';
-        needAlert = true;
-    }
-    else {
-        if (d.elephant && !d.alert) {
-            message = `⚠️ ความเสี่ยงสูง! ช้างอยู่บนถนน! ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
-            colorClass = 'bg-orange-500 text-white';
+        if (d.elephant && d.alert) {
+            message = `⚠️ ความเสี่ยงฉุกเฉิน! รถและช้างอยู่ในพื้นที่เดียวกัน! ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
+            colorClass = 'bg-red-600 text-white';
             needAlert = true;
         }
-    }
+        else {
+            if (d.elephant && !d.alert) {
+                message = `⚠️ ความเสี่ยงสูง! ช้างอยู่บนถนน! ตำแหน่ง ${safe_htmlspecialchars(d.camera_address)}`;
+                colorClass = 'bg-orange-500 text-white';
+                needAlert = true;
+            }
+        }
 
-    if (needAlert) {
-        showPopup(message, colorClass);
-        showHeaderAlert("แจ้งเตือน: " + message, colorClass);
-        lastDetectionTime = Date.now();
+        if (needAlert) {
+            showPopup(message, colorClass);
+            showHeaderAlert("แจ้งเตือน: " + message, colorClass);
+            lastDetectionTime = Date.now();
+        }
     }
-}
 
     function fetchNewData() {
 		fetch(`../elephant_api/get_detections.php?last_id=${lastDetectionID}`, {
@@ -903,6 +904,15 @@ function handleNewDetection(d) {
 
         // Event delegation สำหรับ table-body
         document.getElementById('detection-table-body').addEventListener('click', function(event) {
+            // ตรวจสอบปุ่ม View Image
+            if (event.target && event.target.classList.contains('view-image-button')) {
+                const imagePath = event.target.getAttribute('data-image');
+                console.log("Image Path:", imagePath); // สำหรับ debugging
+                openImageModal(imagePath);
+                event.stopPropagation(); // หยุดการเกิดเหตุการณ์เพิ่มเติม
+                return;
+            }
+
             const row = event.target.closest('tr.clickable-row');
             if (row) {
                 if (event.target.closest('select') || event.target.closest('button') || event.target.closest('a') || event.target.closest('form')) {
@@ -912,11 +922,6 @@ function handleNewDetection(d) {
                 if (id) {
                     window.location.href = `solutions_admin.php?id=${encodeURIComponent(id)}`;
                 }
-            }
-            // ตรวจสอบปุ่ม View Image
-            if (event.target && event.target.classList.contains('view-image-button')) {
-                const imagePath = event.target.getAttribute('data-image');
-                openImageModal(imagePath);
             }
         });
     });
