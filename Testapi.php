@@ -18,7 +18,7 @@ $data = json_decode($json_data, true);
 
 // Debug ลงไฟล์ (เฉพาะ Dev)
 file_put_contents("debug_log.txt", 
-    "Raw JSON:\n".$json_data."\n\nDecoded:\n".print_r($data,true)."\n", 
+    "Raw JSON:\n" . $json_data . "\n\nDecoded:\n" . print_r($data, true) . "\n", 
     FILE_APPEND
 );
 
@@ -27,7 +27,7 @@ if (!$conn) {
     http_response_code(500);
     echo json_encode([
         "status" => "error",
-        "message" => "DB connection failed: ".$conn->connect_error
+        "message" => "DB connection failed: " . $conn->connect_error
     ]);
     exit;
 }
@@ -102,7 +102,7 @@ foreach ($required_fields as $field) {
 }
 
 // ตรวจสอบ optional fields และเพิ่มการตรวจสอบความถูกต้อง
-// elephant_lat และ elephant_long เป็นลิสต์ของตัวเลข
+// elephant_lat, elephant_long, elephant_distance เป็นลิสต์ของตัวเลข
 if (isset($data['elephant_lat']) && isset($data['elephant_long']) && isset($data['elephant_distance'])) {
     if (!is_array($data['elephant_lat']) || !is_array($data['elephant_long']) || !is_array($data['elephant_distance'])) {
         $errors['elephant_lat'] = "elephant_lat, elephant_long และ elephant_distance ต้องเป็นอาร์เรย์";
@@ -266,8 +266,35 @@ if (!is_null($image_data)) {
         ]);
         exit;
     }
+    // ตรวจสอบว่าเป็นรูปแบบที่รองรับหรือไม่ (ตัวอย่าง: JPEG, PNG)
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime_type = finfo_buffer($finfo, $decoded_img);
+    finfo_close($finfo);
+    $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
+    if (!in_array($mime_type, $allowed_types)) {
+        http_response_code(400);
+        echo json_encode([
+            "status"  => "error",
+            "message" => "Unsupported image type."
+        ]);
+        exit;
+    }
     // ตั้งชื่อไฟล์
-    $filename = $upload_dir . "/" . date("Ymd_His") . "_" . uniqid() . ".jpg";
+    $extension = '';
+    switch($mime_type) {
+        case 'image/jpeg':
+            $extension = '.jpg';
+            break;
+        case 'image/png':
+            $extension = '.png';
+            break;
+        case 'image/gif':
+            $extension = '.gif';
+            break;
+        default:
+            $extension = '.jpg';
+    }
+    $filename = $upload_dir . "/" . date("Ymd_His") . "_" . uniqid() . $extension;
     if (!file_put_contents($filename, $decoded_img)) {
         http_response_code(500);
         echo json_encode([
@@ -304,7 +331,50 @@ if (!$stmt_img->execute()) {
 $image_id = $stmt_img->insert_id;
 $stmt_img->close();
 
-// 8) บันทึกข้อมูลลงตาราง detections สำหรับแต่ละช้าง ด้วย Prepared Statement
+// 8) บันทึกข้อมูลลงตาราง detections โดยเก็บ elephant_lat, elephant_long, elephant_distance เป็น JSON
+if ($elephant_count_val > 0 && is_array($elephant_lat) && is_array($elephant_long) && is_array($elephant_distance)) {
+    // แปลงข้อมูลช้างเป็น JSON
+    $elephant_lat_json = json_encode($elephant_lat);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        $errors['elephant_lat'] = "JSON encoding error: " . json_last_error_msg();
+    }
+    
+    $elephant_long_json = json_encode($elephant_long);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        $errors['elephant_long'] = "JSON encoding error: " . json_last_error_msg();
+    }
+    
+    $elephant_distance_json = json_encode($elephant_distance);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        $errors['elephant_distance'] = "JSON encoding error: " . json_last_error_msg();
+    }
+} else {
+    // ไม่มีข้อมูลช้าง
+    $elephant_lat_json = null;
+    $elephant_long_json = null;
+    $elephant_distance_json = null;
+}
+
+// ตรวจสอบหากมีข้อผิดพลาดในการแปลง JSON
+if (!empty($errors)) {
+    http_response_code(400);
+    echo json_encode([
+        "status" => "error",
+        "message" => "JSON encoding error",
+        "errors" => $errors
+    ]);
+    exit;
+}
+
+// เพิ่ม Debugging เพื่อตรวจสอบค่าที่จะส่งไปยังฐานข้อมูล
+file_put_contents("debug_log.txt", 
+    "elephant_lat_json: " . $elephant_lat_json . "\n" .
+    "elephant_long_json: " . $elephant_long_json . "\n" .
+    "elephant_distance_json: " . $elephant_distance_json . "\n", 
+    FILE_APPEND
+);
+
+// เตรียม Prepared Statement สำหรับ detections
 $sql_det = "
   INSERT INTO detections
     (image_id, id_cam, lat_cam, long_cam, elephant, lat_ele, long_ele, distance_ele, `time`, alert, car_count, elephant_count)
@@ -312,7 +382,6 @@ $sql_det = "
     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ";
 
-// เตรียม Prepared Statement สำหรับ detections
 $stmt_det = $conn->prepare($sql_det);
 if (!$stmt_det) {
     http_response_code(500);
@@ -323,66 +392,42 @@ if (!$stmt_det) {
     exit;
 }
 
-// กำหนดชนิดข้อมูลตามตาราง
-/**
- * image_id        = int         (i)
- * id_cam          = string      (s)
- * lat_cam         = double      (d)
- * long_cam        = double      (d)
- * elephant_val    = tinyint     (i)
- * lat_ele         = double      (d)
- * long_ele        = double      (d)
- * distance_ele    = double      (d)
- * time            = string      (s)
- * alert           = tinyint     (i)
- * car_count       = int         (i)
- * elephant_count  = int         (i)
- */
+// ผูกพารามิเตอร์ให้ถูกต้อง
+$stmt_det->bind_param(
+    "isddissssiii", // i s d d i s s s s i i i (12 ตัวอักษร)
+    $image_id,             // i
+    $camera_id,            // s
+    $camera_lat,           // d
+    $camera_long,          // d
+    $elephant_val,         // i
+    $elephant_lat_json,    // s (JSON string) หรือ null
+    $elephant_long_json,   // s (JSON string) หรือ null
+    $elephant_distance_json, // s (JSON string) หรือ null
+    $timestamp,            // s
+    $alert_val,            // i
+    $car_val,              // i
+    $elephant_count_val    // i
+);
 
-// วนลูปผ่านแต่ละช้างและบันทึกข้อมูล
-for ($i = 0; $i < $elephant_count_val; $i++) {
-    // ตรวจสอบว่าข้อมูลมีอยู่ในอาร์เรย์
-    if (!isset($elephant_lat[$i], $elephant_long[$i], $elephant_distance[$i])) {
-        continue; // ข้ามหากข้อมูลไม่ครบ
-    }
+// ตรวจสอบ Type String และจำนวนพารามิเตอร์
+$type_string = "isddissssiii";
+$param_count = 12;
 
-    $lat_ele = floatval($elephant_lat[$i]);
-    $long_ele = floatval($elephant_long[$i]);
-    $distance_ele = floatval($elephant_distance[$i]);
+file_put_contents("debug_log.txt", 
+    "Type string: " . $type_string . "\n" .
+    "Type string length: " . strlen($type_string) . "\n" .
+    "Number of bind variables: " . $param_count . "\n",
+    FILE_APPEND
+);
 
-    // ตรวจสอบช่วงของพิกัด
-    if ($lat_ele < -90 || $lat_ele > 90) {
-        // ข้ามหรือจัดการข้อผิดพลาดตามต้องการ
-        continue;
-    }
-    if ($long_ele < -180 || $long_ele > 180) {
-        // ข้ามหรือจัดการข้อผิดพลาดตามต้องการ
-        continue;
-    }
-
-    // ผูกพารามิเตอร์และ execute
-    $stmt_det->bind_param(
-        "isddidddsiii", // 12 ตัวอักษร
-        $image_id,             // i
-        $camera_id,            // s
-        $camera_lat,           // d
-        $camera_long,          // d
-        $elephant_val,         // i
-        $lat_ele,              // d
-        $long_ele,             // d
-        $distance_ele,         // d
-        $timestamp,            // s
-        $alert_val,            // i
-        $car_val,              // i
-        $elephant_count_val    // i
-    );
-
-    if (!$stmt_det->execute()) {
-        // คุณสามารถบันทึกข้อผิดพลาดแต่ละรายการได้ตามต้องการ
-        // ตัวอย่างเช่น บันทึกลง debug_log หรือส่งข้อความผิดพลาดเฉพาะเจาะจง
-        // ที่นี่เราจะข้ามการ execute ครั้งนี้และดำเนินการกับช้างตัวถัดไป
-        continue;
-    }
+// Execute the statement
+if (!$stmt_det->execute()) {
+    http_response_code(500);
+    echo json_encode([
+        "status" => "error",
+        "message" => "Execute detections failed: " . $stmt_det->error
+    ]);
+    exit;
 }
 
 $stmt_det->close();
