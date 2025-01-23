@@ -400,7 +400,7 @@ $conn->close();
     <div class="container mx-auto py-8 px-4">
         <!-- Detection Information Card -->
         <div class="bg-white shadow-md rounded-lg p-6 mb-8">
-            <h2 class="text-2xl font-semibold mb-4 text-gray-800">Detection Information</h2>
+            <h2 class="text-2xl font-semibold mb-4 text-gray-800">รายละเอียดข้อมูล</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <p><strong>เวลาดำเนินการ:</strong> <?= isset($detection['time']) ? safe_htmlspecialchars($detection['time']) : 'N/A' ?></p>
               
