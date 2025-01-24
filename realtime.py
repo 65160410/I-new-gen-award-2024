@@ -48,6 +48,7 @@ from datetime import datetime
 import pytz
 import os
 import tempfile
+import csv
 
 # --- [Utility Functions] ---
 
@@ -685,18 +686,39 @@ def handle_server_response(response):
 
 def log_data(data):
     """
-    Logs the data payload to a text file with the image data truncated.
+    Logs the data payload to a CSV file with the latest data on top after the header.
 
     Parameters:
     - data: The data payload dictionary.
     """
     try:
-        data_copy = data.copy()
-        if data_copy.get("image"):
-            data_copy["image"] = data_copy["image"][:20] + "..."
-        with open("data_log.txt", "a") as log_file:
-            log_file.write(json.dumps(data_copy) + "\n")
-        print("[DEBUG] Data stored in data_log.txt with base64 truncated")
+        # Define the CSV file path
+        csv_file_path = "data_log.csv"
+
+        # Extract the header from the data keys
+        header = list(data.keys())
+
+        # Truncate the base64 image data to the first 20 characters
+        if 'image' in data and data['image'] is not None:
+            data['image'] = data['image'][:20]
+
+        # Read existing data from the CSV file
+        existing_data = []
+        if os.path.exists(csv_file_path):
+            with open(csv_file_path, "r") as csv_file:
+                reader = csv.DictReader(csv_file)
+                existing_data = list(reader)
+
+        # Add the new data at the top
+        existing_data.insert(0, data)
+
+        # Write the updated data back to the CSV file
+        with open(csv_file_path, "w", newline='') as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=header)
+            writer.writeheader()
+            writer.writerows(existing_data)
+
+        print("[DEBUG] Data stored in data_log.csv with the latest data on top")
     except Exception as e:
         print(f"[ERROR in log_data]: {e}")
 
