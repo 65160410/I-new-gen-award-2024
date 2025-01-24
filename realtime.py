@@ -855,8 +855,6 @@ def main():
 
         print("[DEBUG] Starting main loop. Press 'q' to exit.")
 
-        last_processed_time = time.time()
-
         while True:
             ret, frame = camera.read()
             if not ret:
@@ -866,9 +864,9 @@ def main():
             # Display the live camera feed
             cv2.imshow('Live Camera Feed', frame)
 
-            current_time = time.time()
-            if current_time - last_processed_time >= 30:
-                print("[INFO] Processing frame...")
+            current_time = datetime.now()
+            if current_time.second in [5, 35]:
+                print(f"[INFO] Processing frame at {current_time.strftime('%Y-%m-%d %H:%M:%S')}...")
                 process_frame(
                     camera,
                     CONFIG,
@@ -878,7 +876,8 @@ def main():
                     SERVER_URL,
                     road_model
                 )
-                last_processed_time = time.time()  # Reset the timer after processing
+                # Wait for 1 second to avoid multiple captures within the same second
+                time.sleep(1)
 
             # Check for 'q' or 'ๆ' key press to exit
             if cv2.waitKey(1) & 0xFF in [ord('q'), ord('ๆ')]:
