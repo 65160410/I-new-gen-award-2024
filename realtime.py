@@ -736,17 +736,18 @@ def overlay_detections(original_frame, processed_image, road_found, objects_dete
     - frame_display: The frame with detections overlaid.
     """
     try:
-        if road_found and objects_detected:
+        if road_found:
             # Read the processed image to overlay perspective lines
             processed_image_bgr = cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR)
-            # Draw bounding boxes and labels on the processed image
-            for obj in objects_detected:
-                class_name = obj['class_name']
-                box = obj['box']
-                x1, y1, x2, y2 = map(int, box)
-                color = get_detection_color(class_name)
-                cv2.rectangle(processed_image_bgr, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(processed_image_bgr, class_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+            # Draw bounding boxes and labels on the processed image if objects are detected
+            if objects_detected:
+                for obj in objects_detected:
+                    class_name = obj['class_name']
+                    box = obj['box']
+                    x1, y1, x2, y2 = map(int, box)
+                    color = get_detection_color(class_name)
+                    cv2.rectangle(processed_image_bgr, (x1, y1), (x2, y2), color, 2)
+                    cv2.putText(processed_image_bgr, class_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
             # Replace the current frame with the processed image
             frame_display = processed_image_bgr.copy()
         elif not road_found and objects_detected:
