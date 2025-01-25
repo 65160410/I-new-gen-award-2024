@@ -426,9 +426,63 @@ def detect_objects(image_path, primary_model, class_names_primary, conf_threshol
         print(f"[ERROR in detect_objects]: {e}")
         return []
 
-def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, camera_bearing_degrees, y_positions, params, image_path=None):
+def calculate_adjusted_latlong(camera_lat, camera_long, camera_bearing, elephant_box, y_positions, params, image_width):
     """
-    Creates a payload for the API.
+    Calculates adjusted latitude and longitude for an elephant based on its position in the image.
+
+    Parameters:
+    - camera_lat: Latitude of the camera.
+    - camera_long: Longitude of the camera.
+    - camera_bearing: Bearing of the camera in degrees.
+    - elephant_box: Bounding box of the detected elephant [x1, y1, x2, y2].
+    - y_positions: Y-coordinates of the perspective lines.
+    - params: Parameters dictionary.
+    - image_width: Width of the image.
+
+    Returns:
+    - adjusted_lat: Adjusted latitude of the elephant.
+    - adjusted_long: Adjusted longitude of the elephant.
+    """
+    try:
+        # 1. Calculate distance to the elephant
+        elephant_distance_m = calculate_elephant_distance({'box': elephant_box}, y_positions, params)
+        if elephant_distance_m is None:
+            print("[DEBUG] Could not calculate distance for elephant.")
+            return None, None
+
+        # 2. Determine the horizontal position of the elephant (left, center, right)
+        x_center = (elephant_box[0] + elephant_box[2]) / 2
+        if x_center < image_width / 3:
+            horizontal_position = "left"
+            bearing_adjustment = -10  # Adjust bearing to the left (in degrees)
+        elif x_center > 2 * image_width / 3:
+            horizontal_position = "right"
+            bearing_adjustment = 10  # Adjust bearing to the right (in degrees)
+        else:
+            horizontal_position = "center"
+            bearing_adjustment = 0  # No adjustment needed
+
+        print(f"[DEBUG] Elephant horizontal position: {horizontal_position}, Bearing adjustment: {bearing_adjustment} degrees")
+
+        # 3. Adjust the camera bearing based on the elephant's position
+        adjusted_bearing = camera_bearing + bearing_adjustment
+
+        # 4. Calculate the adjusted latitude and longitude
+        adjusted_lat, adjusted_long = calculate_destination_latlong(
+            camera_lat, camera_long, elephant_distance_m, adjusted_bearing
+        )
+
+        print(f"[DEBUG] Adjusted Latitude: {adjusted_lat}, Adjusted Longitude: {adjusted_long}")
+
+        return adjusted_lat, adjusted_long
+
+    except Exception as e:
+        print(f"[ERROR in calculate_adjusted_latlong]: {e}")
+        return None, None
+        
+def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, camera_bearing_degrees, y_positions, params, image_path=None, image_width = None):
+    """
+    Creates a payload for the API, with adjusted elephant coordinates.
 
     Parameters:
     - camera_id: Camera ID.
@@ -439,6 +493,7 @@ def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, ca
     - y_positions: Y-coordinates of perspective lines.
     - params: Parameters dictionary.
     - image_path: Path to the image (optional).
+    - image_width: Width of the image
 
     Returns:
     - Payload dictionary.
@@ -459,16 +514,34 @@ def create_test_payload(camera_id, camera_lat, camera_long, objects_detected, ca
             for obj in objects_detected:
                 if obj['class_name'].lower() == 'elephant':
                     elephant_count += 1
-                    elephant_distance_m = calculate_elephant_distance(obj, y_positions, params)
-                    if elephant_distance_m is not None:
-                        lat, lon = calculate_destination_latlong(camera_lat, camera_long, elephant_distance_m, camera_bearing_degrees)
-                        if lat is not None and lon is not None:
-                            elephant_lats.append(float(lat))
-                            elephant_longs.append(float(lon))
-                            elephant_distances.append(float(elephant_distance_m))
+                    
+                    # Calculate adjusted lat/long for elephants
+                    if image_width is not None:
+                        adjusted_lat, adjusted_long = calculate_adjusted_latlong(
+                            camera_lat,
+                            camera_long,
+                            camera_bearing_degrees,
+                            obj['box'],
+                            y_positions,
+                            params,
+                            image_width
+                        )
+
+                        if adjusted_lat is not None and adjusted_long is not None:
+                            elephant_lats.append(float(adjusted_lat))
+                            elephant_longs.append(float(adjusted_long))
+                        else :
+                            elephant_lats.append(None)
+                            elephant_longs.append(None)
                     else:
                         elephant_lats.append(None)
                         elephant_longs.append(None)
+                    
+                    elephant_distance_m = calculate_elephant_distance(obj, y_positions, params)
+                    
+                    if elephant_distance_m is not None:
+                        elephant_distances.append(float(elephant_distance_m))
+                    else:
                         elephant_distances.append(None)
                 elif obj['class_name'].lower() == 'car':
                     car_count += 1
@@ -580,6 +653,8 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
     if not temp_image_path:
         print("[ERROR] Failed to save captured frame.")
         return
+    
+    image_width = frame.shape[1] # Get the width of the image
 
     try:
         # Process road image
@@ -613,7 +688,8 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
             camera_bearing_degrees=CONFIG['bearing_degrees'],
             y_positions=y_positions,
             params=PARAMS,
-            image_path=temp_image_path if image_needed else None
+            image_path=temp_image_path if image_needed else None,
+            image_width=image_width
         )
 
         # Convert all data to native Python types to ensure JSON serialization
@@ -629,9 +705,9 @@ def process_frame(camera, CONFIG, PARAMS, object_model_1, class_names_primary, S
         response = send_to_server(SERVER_URL, data)
         handle_server_response(response)
 
-        # Store data in a .txt file 
+        # Store data in a .txt file
         log_data(data)
-    
+     
         # Overlay detection results on the frame for display
         frame_display = overlay_detections(frame, processed_image, road_found, objects_detected)
 
