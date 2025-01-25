@@ -450,19 +450,12 @@ def calculate_adjusted_latlong(camera_lat, camera_long, camera_bearing, elephant
             print("[DEBUG] Could not calculate distance for elephant.")
             return None, None
 
-        # 2. Determine the horizontal position of the elephant (left, center, right)
+        # 2. Determine the horizontal position of the elephant (split into 10 positions)
         x_center = (elephant_box[0] + elephant_box[2]) / 2
-        if x_center < image_width / 3:
-            horizontal_position = "left"
-            bearing_adjustment = -10  # Adjust bearing to the left (in degrees)
-        elif x_center > 2 * image_width / 3:
-            horizontal_position = "right"
-            bearing_adjustment = 10  # Adjust bearing to the right (in degrees)
-        else:
-            horizontal_position = "center"
-            bearing_adjustment = 0  # No adjustment needed
+        position_index = int((x_center / image_width) * 10)
+        bearing_adjustment = (position_index - 5) * 2  # Adjust bearing based on position index
 
-        print(f"[DEBUG] Elephant horizontal position: {horizontal_position}, Bearing adjustment: {bearing_adjustment} degrees")
+        print(f"[DEBUG] Elephant horizontal position index: {position_index}, Bearing adjustment: {bearing_adjustment} degrees")
 
         # 3. Adjust the camera bearing based on the elephant's position
         adjusted_bearing = camera_bearing + bearing_adjustment
